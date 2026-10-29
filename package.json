@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && cp dist/index.html GioV消しゴム.html && cp dist/index.html ../GioV消しゴム.html",
+    "build": "tsc -b && vite build && cp dist/index.html GioV_PDF_Eraser.html && cp dist/index.html ../GioV_PDF_Eraser.html",
     "preview": "vite preview"
   },
   "dependencies": {

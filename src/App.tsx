@@ -151,12 +151,15 @@ export default function App() {
 
       if (totalFound > 0) {
         setRedactions((prev) => [...prev, ...newRects])
-        showToast(`「${keyword}」に該当する ${totalFound} 箇所を消しゴム指定しました！`)
+        const scopeText = searchAllPages ? `全 ${targetPageIndices.length} ページ中、` : '現ページで '
+        showToast(`✨ 「${keyword}」に該当する ${scopeText}${totalFound} 箇所を消しゴム指定しました！`)
       } else {
-        alert(`「${keyword}」に一致するテキストは見つかりませんでした。`)
+        const scopeText = searchAllPages ? '全ページ' : '現在のページ'
+        showToast(`🔍 ${scopeText}で「${keyword}」に一致するテキストは見つかりませんでした。`)
       }
     } catch (err) {
       console.error('キーワード検索エラー:', err)
+      alert('キーワード検索中にエラーが発生しました。')
     } finally {
       setIsProcessing(false)
     }
@@ -164,15 +167,21 @@ export default function App() {
 
   // 墨消し実行＆クリーンPDFダウンロード
   const handleSave = async () => {
-    if (!pdfBytes || redactions.length === 0) return
+    if (!pdfBytes) return
+
+    if (redactions.length === 0) {
+      showToast('⚠️ 消去したい箇所をドラッグ選択するか、上部の検索窓からキーワードを指定してください。')
+      return
+    }
+
     setIsProcessing(true)
 
     try {
       // 物理墨消しエンジン実行
       const cleanBytes = await applyRedactions(pdfBytes, redactions, colorMode)
 
-      // ダウンロードトリガー
-      const blob = new Blob([cleanBytes.buffer as ArrayBuffer], { type: 'application/pdf' })
+      // ダウンロードトリガー (安全にBlob化)
+      const blob = new Blob([cleanBytes as BlobPart], { type: 'application/pdf' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       const baseName = fileName ? fileName.replace(/\.pdf$/i, '') : 'document'
@@ -182,7 +191,7 @@ export default function App() {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
 
-      showToast('🎉 完全不可逆墨消しが完了しました！消去場所以外のテキストはOCR・選択可能です。')
+      showToast(`🎉 【${redactions.length}箇所】の完全不可逆墨消しが完了しました！消去箇所以外のテキスト選択・OCR適性は100%保持されています。`)
     } catch (err) {
       console.error('墨消し保存エラー:', err)
       alert('墨消し処理中にエラーが発生しました。')

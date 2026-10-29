@@ -8,6 +8,7 @@ import {
   Trash2,
   Square,
   Sparkles,
+  Loader2,
 } from 'lucide-react'
 
 interface ToolbarProps {
@@ -165,19 +166,28 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         <button
           type="submit"
           disabled={!keyword.trim() || isSearching}
-          className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs font-medium transition flex items-center gap-1 border border-slate-700"
+          className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs font-medium transition flex items-center gap-1 border border-slate-700 cursor-pointer"
           title="このページで見つかった箇所を墨消し指定"
         >
-          <Sparkles className="w-3 h-3 text-rose-400" />
+          {isSearching ? (
+            <Loader2 className="w-3 h-3 text-rose-400 animate-spin" />
+          ) : (
+            <Sparkles className="w-3 h-3 text-rose-400" />
+          )}
           現ページ
         </button>
         <button
           type="button"
           onClick={handleSearchAll}
           disabled={!keyword.trim() || isSearching}
-          className="px-2.5 py-1.5 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 border border-rose-800/60 disabled:opacity-40 text-rose-300 text-xs font-medium transition flex items-center gap-1"
+          className="px-2.5 py-1.5 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 border border-rose-800/60 disabled:opacity-40 text-rose-300 text-xs font-medium transition flex items-center gap-1 cursor-pointer"
           title="全ページで一致する箇所をすべて一括墨消し指定"
         >
+          {isSearching ? (
+            <Loader2 className="w-3 h-3 text-rose-300 animate-spin" />
+          ) : (
+            <Sparkles className="w-3 h-3 text-rose-400" />
+          )}
           全頁一括
         </button>
       </form>

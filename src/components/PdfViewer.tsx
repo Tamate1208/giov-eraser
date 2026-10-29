@@ -104,15 +104,14 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       const displayW = imageRef.current.clientWidth
       const displayH = imageRef.current.clientHeight
 
-      // 画面座標 (左上原点) から PDF座標系 (左下原点 [x0, y0, x1, y1]) への正規化変換
+      // 画面座標 (左上原点) から PDF/MuPDF座標系 (左上原点 [x0, y0, x1, y1]) への正規化変換
       const scaleX = pageInfo.width / displayW
       const scaleY = pageInfo.height / displayH
 
       const pdfX0 = minScreenX * scaleX
       const pdfX1 = maxScreenX * scaleX
-      // PDF は Y=0 が下端
-      const pdfY0 = (displayH - maxScreenY) * scaleY
-      const pdfY1 = (displayH - minScreenY) * scaleY
+      const pdfY0 = minScreenY * scaleY
+      const pdfY1 = maxScreenY * scaleY
 
       onAddRedaction({
         x0: pdfX0,
@@ -129,7 +128,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     setDragCurrent(null)
   }
 
-  // PDF座標 [x0, y0, x1, y1] を画面CSSスタイル (top, left, width, height) に変換
+  // PDF/MuPDF座標 [x0, y0, x1, y1] (左上原点) を画面CSSスタイル (top, left, width, height) に変換
   const getScreenStyle = (r: RedactRect) => {
     if (!pageInfo || !imageRef.current) return { display: 'none' }
     const displayW = imageRef.current.clientWidth
@@ -139,7 +138,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     const scaleY = displayH / pageInfo.height
 
     const left = r.x0 * scaleX
-    const top = displayH - r.y1 * scaleY
+    const top = r.y0 * scaleY
     const width = (r.x1 - r.x0) * scaleX
     const height = (r.y1 - r.y0) * scaleY
 

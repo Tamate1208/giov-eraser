@@ -127,16 +127,26 @@ export async function searchPageKeyword(
   const page = doc.loadPage(pageIndex);
 
   const hits = page.search(keyword);
+  const bounds = page.getBounds();
+  const pageW = bounds[2] - bounds[0];
+  const pageH = bounds[3] - bounds[1];
   const rects: Array<[number, number, number, number]> = [];
 
   for (const hit of hits) {
     for (const q of hit) {
-      // Quad [ulx, uly, urx, ury, llx, lly, lrx, lry]
-      const x0 = Math.min(q[0], q[4]);
-      const y0 = Math.min(q[1], q[3]);
-      const x1 = Math.max(q[2], q[6]);
-      const y1 = Math.max(q[5], q[7]);
-      rects.push([x0 - 2, y0 - 2, x1 + 2, y1 + 2]);
+      // Quad [ulx, uly, urx, ury, llx, lly, lrx, lry] - MuPDFは左上原点 (0, 0)
+      const rawX0 = Math.min(q[0], q[4]);
+      const rawY0 = Math.min(q[1], q[3]);
+      const rawX1 = Math.max(q[2], q[6]);
+      const rawY1 = Math.max(q[5], q[7]);
+
+      // 視認性と墨消し漏れ防止のため余白を付与し、ページ枠内にクランプ
+      const x0 = Math.max(0, rawX0 - 2);
+      const y0 = Math.max(0, rawY0 - 2);
+      const x1 = Math.min(pageW, rawX1 + 2);
+      const y1 = Math.min(pageH, rawY1 + 2);
+
+      rects.push([x0, y0, x1, y1]);
     }
   }
 

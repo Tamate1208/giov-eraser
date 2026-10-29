@@ -28,7 +28,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-              GioV 消しゴム
+              GioV PDF Eraser
             </h1>
             <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 shadow-sm">
               <ShieldCheck className="w-3.5 h-3.5" />
@@ -85,12 +85,13 @@ export const Header: React.FC<HeaderProps> = ({
         {fileName && (
           <button
             onClick={onSaveClick}
-            disabled={isProcessing || totalRedactions === 0}
+            disabled={isProcessing}
             className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 shadow-lg active:scale-95 ${
               totalRedactions > 0
-                ? 'bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white shadow-rose-600/30 ring-1 ring-rose-400/50'
-                : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                ? 'bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white shadow-rose-600/30 ring-1 ring-rose-400/50 cursor-pointer'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer'
             }`}
+            title={totalRedactions === 0 ? '消しゴム枠を設定してから保存してください' : '不可逆墨消しを実行して保存'}
           >
             <Download className={`w-4 h-4 ${isProcessing ? 'animate-bounce' : ''}`} />
             <span>{isProcessing ? '墨消し処理中...' : '墨消しPDFを保存'}</span>
