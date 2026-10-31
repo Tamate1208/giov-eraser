@@ -7,6 +7,7 @@ import {
   getPdfInfo,
   renderPageImage,
   searchPageKeyword,
+  extractTextRectsInBBox,
   applyRedactions,
   RedactRect,
   PdfDocumentInfo,
@@ -29,6 +30,7 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState<number>(0)
   const [zoom, setZoom] = useState<number>(1.0)
   const [colorMode, setColorMode] = useState<'black' | 'white'>('black')
+  const [selectMode, setSelectMode] = useState<'text' | 'rect'>('text')
   const [redactions, setRedactions] = useState<RedactRect[]>([])
 
   // ページごとのレンダリング画像キャッシュ
@@ -104,33 +106,103 @@ export default function App() {
   }
 
   // 消しゴム矩形の追加 (マウス領域ドラッグ時)
-  const handleAddRedaction = (rectData: Omit<RedactRect, 'id'>) => {
+  const handleAddRedaction = async (rectData: Omit<RedactRect, 'id'>) => {
+    // 直前選択領域としては囲んだ全体を保持（全頁一括適用の際に元の範囲を使えるように）
+    const baseAreaRect: RedactRect = {
+      ...rectData,
+      id: `area_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    }
+    setLastAddedRect(baseAreaRect)
+
+    // テキスト吸着モードの場合: 指定矩形内のテキスト行バウンディングボックスを抽出
+    if (selectMode === 'text' && pdfBytes) {
+      try {
+        const textRects = await extractTextRectsInBBox(
+          pdfBytes,
+          rectData.pageIndex,
+          [rectData.x0, rectData.y0, rectData.x1, rectData.y1]
+        )
+        if (textRects.length > 0) {
+          const newRects: RedactRect[] = textRects.map(([x0, y0, x1, y1]) => ({
+            id: `text_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            x0,
+            y0,
+            x1,
+            y1,
+            pageIndex: rectData.pageIndex,
+            color: rectData.color,
+          }))
+          setRedactions((prev) => [...prev, ...newRects])
+          showToast(`✨ 囲み内のテキスト（${newRects.length}行）に吸着選択しました！`)
+          return
+        }
+        // テキストが存在しない余白や図面・線を囲んだ場合は、フォールバックとして矩形全体を消去枠にする
+      } catch (err) {
+        console.warn('テキスト吸着抽出エラー（自由矩形フォールバック）:', err)
+      }
+    }
+
+    // 自由矩形モード、またはテキストが検出されなかった場合（図面・印鑑・写真など）
     const newRect: RedactRect = {
       ...rectData,
       id: `redact_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     }
     setRedactions((prev) => [...prev, newRect])
-    setLastAddedRect(newRect)
   }
 
   // 直前に囲んだ領域を全ページに一括展開
-  const handleApplyAreaToAllPages = () => {
-    if (!lastAddedRect || !docInfo) return
+  const handleApplyAreaToAllPages = async () => {
+    if (!lastAddedRect || !docInfo || !pdfBytes) return
     if (docInfo.numPages <= 1) {
       showToast('ℹ️ この文書は1ページのみのため、全ページ適用の必要はありません。')
       return
     }
 
-    // 他の全ページに同じ座標で展開
-    const otherPages = docInfo.pages.filter((p) => p.index !== lastAddedRect.pageIndex)
-    const newRects: RedactRect[] = otherPages.map((p) => ({
-      ...lastAddedRect,
-      id: `copy_${Date.now()}_p${p.index}_${Math.random().toString(36).substr(2, 7)}`,
-      pageIndex: p.index,
-    }))
+    setIsProcessing(true)
+    try {
+      const otherPages = docInfo.pages.filter((p) => p.index !== lastAddedRect.pageIndex)
+      const newRects: RedactRect[] = []
 
-    setRedactions((prev) => [...prev, ...newRects])
-    showToast(`✨ 直前に囲んだ領域を、全 ${docInfo.numPages} ページの同じ位置に展開しました！`)
+      for (const p of otherPages) {
+        // テキスト吸着モードの場合は各ページ内の該当テキスト行を抽出
+        if (selectMode === 'text') {
+          const textRects = await extractTextRectsInBBox(
+            pdfBytes,
+            p.index,
+            [lastAddedRect.x0, lastAddedRect.y0, lastAddedRect.x1, lastAddedRect.y1]
+          )
+          if (textRects.length > 0) {
+            for (const [x0, y0, x1, y1] of textRects) {
+              newRects.push({
+                id: `copy_text_${Date.now()}_p${p.index}_${Math.random().toString(36).substr(2, 7)}`,
+                x0,
+                y0,
+                x1,
+                y1,
+                pageIndex: p.index,
+                color: lastAddedRect.color,
+              })
+            }
+            continue
+          }
+        }
+
+        // 自由矩形モード、またはテキストが0件だった場合は同じ矩形を展開
+        newRects.push({
+          ...lastAddedRect,
+          id: `copy_${Date.now()}_p${p.index}_${Math.random().toString(36).substr(2, 7)}`,
+          pageIndex: p.index,
+        })
+      }
+
+      setRedactions((prev) => [...prev, ...newRects])
+      showToast(`✨ 直前に囲んだ領域を、全 ${docInfo.numPages} ページに一括展開しました！（計${newRects.length}箇所追加）`)
+    } catch (err) {
+      console.error('全ページ展開エラー:', err)
+      showToast('全ページ展開中にエラーが発生しました。')
+    } finally {
+      setIsProcessing(false)
+    }
   }
 
   // 消しゴム矩形の削除
@@ -307,12 +379,14 @@ export default function App() {
             numPages={docInfo.numPages}
             zoom={zoom}
             colorMode={colorMode}
+            selectMode={selectMode}
             pageRedactionCount={currentPageRedactions.length}
             totalRedactionCount={redactions.length}
             hasLastSelectedArea={lastAddedRect !== null}
             onPageChange={setCurrentPage}
             onZoomChange={setZoom}
             onColorModeChange={setColorMode}
+            onSelectModeChange={setSelectMode}
             onClearPageRedactions={handleClearPageRedactions}
             onClearAllRedactions={handleClearAllRedactions}
             onKeywordSearch={handleKeywordSearch}

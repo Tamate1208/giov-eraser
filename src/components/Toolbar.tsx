@@ -9,6 +9,7 @@ import {
   Square,
   Sparkles,
   Loader2,
+  FileText,
 } from 'lucide-react'
 
 interface ToolbarProps {
@@ -16,12 +17,14 @@ interface ToolbarProps {
   numPages: number;
   zoom: number;
   colorMode: 'black' | 'white';
+  selectMode: 'text' | 'rect';
   pageRedactionCount: number;
   totalRedactionCount: number;
   hasLastSelectedArea: boolean;
   onPageChange: (newPage: number) => void;
   onZoomChange: (newZoom: number) => void;
   onColorModeChange: (mode: 'black' | 'white') => void;
+  onSelectModeChange: (mode: 'text' | 'rect') => void;
   onClearPageRedactions: () => void;
   onClearAllRedactions: () => void;
   onKeywordSearch: (keyword: string, searchAllPages: boolean) => void;
@@ -33,12 +36,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   numPages,
   zoom,
   colorMode,
+  selectMode,
   pageRedactionCount,
   totalRedactionCount,
   hasLastSelectedArea,
   onPageChange,
   onZoomChange,
   onColorModeChange,
+  onSelectModeChange,
   onClearPageRedactions,
   onClearAllRedactions,
   onKeywordSearch,
@@ -141,9 +146,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
           <button
             onClick={() => onColorModeChange('black')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition cursor-pointer ${
               colorMode === 'black'
-                ? 'bg-black text-white shadow-sm ring-1 ring-white/20'
+                ? 'bg-black text-white shadow-sm ring-1 ring-white/20 font-bold'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
@@ -152,7 +157,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           </button>
           <button
             onClick={() => onColorModeChange('white')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition cursor-pointer ${
               colorMode === 'white'
                 ? 'bg-white text-slate-900 shadow-sm font-bold'
                 : 'text-slate-400 hover:text-white'
@@ -160,6 +165,37 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           >
             <Square className="w-3.5 h-3.5 fill-white stroke-slate-300" />
             白塗り（余白化）
+          </button>
+        </div>
+      </div>
+
+      {/* 選択モード（テキスト吸着 / 自由矩形） */}
+      <div className="flex items-center gap-2 border-l border-slate-800 pl-4">
+        <span className="text-slate-400">選択モード:</span>
+        <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+          <button
+            onClick={() => onSelectModeChange('text')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition cursor-pointer ${
+              selectMode === 'text'
+                ? 'bg-rose-600 text-white shadow-sm ring-1 ring-white/20 font-bold'
+                : 'text-slate-400 hover:text-white'
+            }`}
+            title="囲んだ範囲の中にある文字だけにピッタリ吸着して消去"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            テキスト吸着
+          </button>
+          <button
+            onClick={() => onSelectModeChange('rect')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition cursor-pointer ${
+              selectMode === 'rect'
+                ? 'bg-rose-600 text-white shadow-sm ring-1 ring-white/20 font-bold'
+                : 'text-slate-400 hover:text-white'
+            }`}
+            title="文字の有無に関わらず、囲んだ四角形全体をそのまま消去（図面・印鑑等）"
+          >
+            <Square className="w-3.5 h-3.5" />
+            自由矩形
           </button>
         </div>
       </div>

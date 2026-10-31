@@ -154,6 +154,55 @@ export async function searchPageKeyword(
 }
 
 /**
+ * 指定矩形領域内にあるテキスト行の精密なバウンディングボックスを抽出（テキスト吸着選択用）
+ */
+export async function extractTextRectsInBBox(
+  pdfBytes: Uint8Array,
+  pageIndex: number,
+  bbox: [number, number, number, number]
+): Promise<Array<[number, number, number, number]>> {
+  const [rx0, ry0, rx1, ry1] = bbox;
+  const m = await getMuPdf();
+  const doc = m.Document.openDocument(pdfBytes, 'application/pdf');
+  const page = doc.loadPage(pageIndex);
+  const textPage = page.toStructuredText();
+  const json = JSON.parse(textPage.asJSON());
+
+  const bounds = page.getBounds();
+  const pageW = bounds[2] - bounds[0];
+  const pageH = bounds[3] - bounds[1];
+  const rects: Array<[number, number, number, number]> = [];
+
+  for (const block of json.blocks) {
+    if (block.type !== 'text') continue;
+    for (const line of block.lines) {
+      const lx0 = line.bbox.x;
+      const ly0 = line.bbox.y;
+      const lx1 = lx0 + line.bbox.w;
+      const ly1 = ly0 + line.bbox.h;
+
+      // 重なり (交差) 判定
+      const ix0 = Math.max(rx0, lx0);
+      const iy0 = Math.max(ry0, ly0);
+      const ix1 = Math.min(rx1, lx1);
+      const iy1 = Math.min(ry1, ly1);
+
+      // 交差判定
+      if (ix1 - ix0 >= 2 && iy1 - iy0 >= 2) {
+        rects.push([
+          Math.max(0, ix0 - 2),
+          Math.max(0, ly0 - 2),
+          Math.min(pageW, ix1 + 2),
+          Math.min(pageH, iy1 + 2),
+        ]);
+      }
+    }
+  }
+
+  return rects;
+}
+
+/**
  * 完全不可逆墨消し（Redaction）の実行
  * 選択範囲内のテキストストリーム・画像・オブジェクトを物理削除し、
  * 非選択箇所のテキスト選択・OCR適性を100%保持したクリーンPDFを生成する
