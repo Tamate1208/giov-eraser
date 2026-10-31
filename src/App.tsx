@@ -405,7 +405,7 @@ export default function App() {
                 <Eraser className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
                 <div>
                   <div className="font-semibold text-slate-200 mb-0.5">完全不可逆・真のRedaction</div>
-                  <div>指定領域のテキスト・画像を物理削除。DocuWorks等のマスクと異なり、コピペ復元は100%不可能です。</div>
+                  <div>指定領域のテキスト・画像を内部から物理切除。単なる目隠しや注釈マスキングと異なり、テキスト選択やコピペによる復元は一切不可能です。</div>
                 </div>
               </div>
 
