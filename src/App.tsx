@@ -343,80 +343,113 @@ export default function App() {
           </div>
         </>
       ) : (
-        /* 初期状態: PDFファイル読み込みエリア */
-        <div className="flex-1 flex flex-col items-center justify-center p-8 overflow-y-auto">
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            className="w-full max-w-2xl border-2 border-dashed border-slate-700 hover:border-rose-500/80 rounded-3xl p-12 text-center bg-slate-900/50 hover:bg-slate-900/80 transition duration-200 cursor-pointer group shadow-2xl shadow-black/60 relative overflow-hidden ring-1 ring-white/5"
-          >
-            <div className="absolute inset-0 bg-gradient-to-br from-rose-500/5 via-transparent to-pink-500/5 pointer-events-none" />
-
-            <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-rose-500 to-pink-600 text-white flex items-center justify-center shadow-xl shadow-rose-500/30 group-hover:scale-105 transition transform">
-              <Eraser className="w-10 h-10" />
+        /* 初期状態: Cals-Viewerスタイルの初期画面 */
+        <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8 bg-slate-950 text-slate-100 overflow-y-auto relative">
+          <div className="max-w-2xl w-full flex flex-col items-center">
+            {/* タイトルバッジ (Cals-Viewerスタイル) */}
+            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-rose-950/50 border border-rose-500/40 text-rose-300 text-xs font-semibold mb-4 shadow-sm">
+              <ShieldCheck className="w-4 h-4 text-rose-400" />
+              <span>GioV PDF Eraser (完全ローカル・スタンドアロン版)</span>
             </div>
 
-            <h2 className="text-2xl font-bold text-white mb-2">
-              PDFファイルをここにドラッグ＆ドロップ
+            <h2 className="text-2xl sm:text-3xl font-extrabold text-white text-center mb-2 tracking-tight">
+              PDF書類・図面を開いて墨消しを開始
             </h2>
-            <p className="text-sm text-slate-400 mb-6">
-              または <span className="text-rose-400 font-semibold underline underline-offset-4">ファイルを選択</span> して開く
+            <p className="text-sm text-slate-400 text-center mb-8 max-w-lg">
+              指定箇所のテキストやオブジェクトをPDF内部から物理切除。消去箇所以外のテキスト選択やOCR適性を100%保持した安全な電子ファイルを生成します。
             </p>
 
-            {/* 特長バッジ */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-left pt-6 border-t border-slate-800">
-              <div className="bg-slate-950/70 p-3.5 rounded-xl border border-slate-800/80">
-                <div className="flex items-center gap-2 text-rose-400 font-bold text-xs mb-1">
-                  <ShieldCheck className="w-4 h-4" />
-                  完全不可逆な墨消し
-                </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  指定領域のテキスト・画像をPDF内部から物理削除。コピペや注釈解除による復元は100%不可能です。
-                </p>
+            {/* ドロップゾーン */}
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full p-8 sm:p-12 border-2 border-dashed rounded-2xl transition flex flex-col items-center justify-center text-center backdrop-blur-sm border-slate-700 bg-slate-900/60 hover:border-rose-500/80 hover:bg-slate-900/80 cursor-pointer group shadow-2xl relative overflow-hidden ring-1 ring-white/5"
+            >
+              <div className="w-16 h-16 rounded-2xl bg-rose-600/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-5 shadow-inner group-hover:scale-105 transition transform">
+                <Eraser className="w-8 h-8 text-rose-400 animate-pulse" />
               </div>
 
-              <div className="bg-slate-950/70 p-3.5 rounded-xl border border-slate-800/80">
-                <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs mb-1">
-                  <FileCheck className="w-4 h-4" />
-                  他テキスト・OCR完全維持
+              <h3 className="text-lg font-bold text-slate-100 mb-1">
+                PDFファイルをここにドラッグ＆ドロップ
+              </h3>
+              <p className="text-xs text-slate-400 mb-6">
+                土木・建築図面、契約書、報告書、帳票など、あらゆるPDFドキュメントに対応
+              </p>
+
+              {/* ボタン */}
+              <div className="flex flex-wrap items-center justify-center gap-3 w-full max-w-md">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    fileInputRef.current?.click()
+                  }}
+                  className="flex-1 min-w-[200px] flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white text-sm font-semibold shadow-lg shadow-rose-600/25 transition active:scale-95 cursor-pointer ring-1 ring-white/20"
+                >
+                  <FileUp className="w-4 h-4 text-white" />
+                  <span>PDFファイルを選択して開く</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 特徴説明フッター (Cals-Viewerと同一の3カラムカード) */}
+            <div className="mt-12 grid grid-cols-1 sm:grid-cols-3 gap-4 w-full text-xs text-slate-400">
+              <div className="bg-slate-900/40 border border-slate-800 p-3.5 rounded-xl flex items-start gap-2.5">
+                <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-semibold text-slate-200 mb-0.5">完全オフライン＆高セキュリティ</div>
+                  <div>データは端末内（ブラウザメモリ）でのみ解析・処理。外部サーバーへの送信は一切行いません。</div>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  消していない箇所のテキストデータは一切劣化させず保持。OCRや別ソフトでの文字選択がそのまま可能です。
-                </p>
               </div>
 
-              <div className="bg-slate-950/70 p-3.5 rounded-xl border border-slate-800/80">
-                <div className="flex items-center gap-2 text-indigo-400 font-bold text-xs mb-1">
-                  <Lock className="w-4 h-4" />
-                  完全オフライン動作
+              <div className="bg-slate-900/40 border border-slate-800 p-3.5 rounded-xl flex items-start gap-2.5">
+                <Eraser className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-semibold text-slate-200 mb-0.5">完全不可逆・真のRedaction</div>
+                  <div>指定領域のテキスト・画像を物理削除。DocuWorks等のマスクと異なり、コピペ復元は100%不可能です。</div>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  ブラウザ内部（Wasm）で全処理が完結。機密書類が外部サーバーへ送信される心配は一切ありません。
-                </p>
+              </div>
+
+              <div className="bg-slate-900/40 border border-slate-800 p-3.5 rounded-xl flex items-start gap-2.5">
+                <FileCheck className="w-5 h-5 text-blue-400 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-semibold text-slate-200 mb-0.5">OCR適性・他テキスト完全維持</div>
+                  <div>消去箇所以外の文字構造やフォント情報はそのまま維持。他システムでのOCRやテキスト選択に支障ありません。</div>
+                </div>
               </div>
             </div>
           </div>
-
-          <p className="text-xs text-slate-500 mt-6 flex items-center gap-1.5">
-            <Zap className="w-3.5 h-3.5 text-amber-400" />
-            単一HTMLファイル完結・現場のPCやオフライン環境でもそのままご利用いただけます
-          </p>
         </div>
       )}
 
-      {/* 処理中ローディングオーバーレイ */}
+      {/* 処理中ローディングオーバーレイ (Cals-Viewerスタイル) */}
       {(isLoadingPdf || isProcessing) && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-2xl flex flex-col items-center gap-4 text-center ring-1 ring-white/10">
-            <div className="w-12 h-12 rounded-full border-4 border-rose-500 border-t-transparent animate-spin" />
-            <div>
-              <h3 className="font-bold text-white text-sm">
-                {isLoadingPdf ? 'PDFを安全に読み込み中...' : '真の不可逆墨消しを実行中...'}
-              </h3>
-              <p className="text-xs text-slate-400 mt-1">
-                {isProcessing
-                  ? '内部ストリームからテキストを物理切除し、他テキストのOCR構造を再構築しています'
-                  : '端末内部のWebAssemblyエンジンで安全に展開しています'}
-              </p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4 animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl p-8 max-w-md w-full shadow-2xl flex flex-col items-center text-center">
+            {/* 大きなスピナー */}
+            <div className="relative mb-5">
+              <div className="w-16 h-16 rounded-full border-4 border-rose-500/20 border-t-rose-500 animate-spin" />
+              <Eraser className="w-8 h-8 text-rose-400 absolute inset-0 m-auto animate-pulse" />
+            </div>
+
+            <h3 className="text-lg font-bold text-white mb-2">
+              {isLoadingPdf ? 'PDFドキュメントを読み込み中' : '不可逆墨消しを実行中'}
+            </h3>
+            
+            {/* リアルタイム進捗メッセージ */}
+            <p className="text-sm font-medium text-rose-400 mb-4 min-h-[1.5rem]">
+              {isLoadingPdf
+                ? '端末内部のWebAssemblyエンジンで安全に展開中...'
+                : '指定箇所のテキストを物理切除し、他テキストのOCR構造を保持中...'}
+            </p>
+
+            {/* パルスプログレスバー */}
+            <div className="w-full bg-slate-800 rounded-full h-2 mb-4 overflow-hidden relative">
+              <div className="bg-gradient-to-r from-rose-600 via-pink-500 to-emerald-400 h-full w-full animate-pulse" />
+            </div>
+
+            <div className="text-[11px] text-slate-400 space-y-1">
+              <div>・外部へのデータ送信は一切行いません（完全ローカル完結・オフライン処理）</div>
+              <div>・消去箇所以外のテキスト選択・OCR適性を100%保持します</div>
             </div>
           </div>
         </div>
