@@ -1,6 +1,14 @@
 export type AppMode = 'eraser' | 'draw'
 
-export type DrawingTool = 'text' | 'arrow' | 'line' | 'rect' | 'polygon' | 'check' | 'circle'
+export type DrawingTool =
+  | 'text'
+  | 'line'
+  | 'rect'
+  | 'polygon'
+  | 'circle'
+  | 'check'
+  | 'draw_eraser'
+  | 'arrow'
 
 export type FillMode = 'none' | 'semi' | 'solid'
 

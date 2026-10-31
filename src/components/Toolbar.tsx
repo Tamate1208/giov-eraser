@@ -409,25 +409,13 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               文字
             </button>
             <button
-              onClick={() => onToolChange('arrow')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition cursor-pointer ${
-                activeTool === 'arrow'
-                  ? 'bg-blue-600 text-white shadow-sm font-bold'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-              title="引き出し線・矢印"
-            >
-              <ArrowUpRight className="w-3.5 h-3.5" />
-              矢印
-            </button>
-            <button
               onClick={() => onToolChange('line')}
               className={`flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition cursor-pointer ${
                 activeTool === 'line'
                   ? 'bg-blue-600 text-white shadow-sm font-bold'
                   : 'text-slate-300 hover:text-white'
               }`}
-              title="直線"
+              title="直線（矢印・引き出し線）"
             >
               <Minus className="w-3.5 h-3.5" />
               直線
@@ -480,194 +468,216 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               <Check className="w-3.5 h-3.5" />
               チェック
             </button>
+            <button
+              onClick={() => onToolChange('draw_eraser')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition cursor-pointer ${
+                activeTool === 'draw_eraser'
+                  ? 'bg-rose-600 text-white shadow-sm font-bold ring-1 ring-white/20'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+              title="クリックした描画オブジェクト（文字・線・図形・チェック）を即座に消去"
+            >
+              <Eraser className="w-3.5 h-3.5 text-rose-300" />
+              描画消しゴム
+            </button>
           </div>
 
-          {/* カラーパレット */}
-          <div className="flex items-center gap-1.5 border-l border-slate-800 pl-3">
-            <span className="text-slate-400 font-medium">色:</span>
-            <div className="flex items-center gap-1">
-              {COLOR_PALETTE.map((c) => (
-                <button
-                  key={c.value}
-                  onClick={() => onDrawColorChange(c.value)}
-                  className={`w-5 h-5 rounded-full border transition cursor-pointer ${
-                    drawColor === c.value
-                      ? `ring-2 ${c.ring} scale-110 border-white`
-                      : 'border-slate-700 opacity-80 hover:opacity-100'
-                  }`}
-                  style={{ backgroundColor: c.value }}
-                  title={c.label}
-                />
-              ))}
+          {/* 描画消しゴム選択時のガイド表示 */}
+          {activeTool === 'draw_eraser' ? (
+            <div className="flex items-center gap-2 border-l border-slate-800 pl-3 text-rose-300 font-medium animate-fade-in">
+              <Eraser className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>消去モード：画面上の描画オブジェクト（文字・線・囲み・チェック）をクリックすると即座に消去できます</span>
             </div>
-          </div>
-
-          {/* 塗りモード（矩形・多角形・丸の場合） */}
-          {(activeTool === 'rect' || activeTool === 'polygon' || activeTool === 'circle') && (
-            <div className="flex items-center gap-2 border-l border-slate-800 pl-3">
-              <span className="text-slate-400 font-medium">塗り:</span>
-              <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
-                <button
-                  onClick={() => onFillModeChange('none')}
-                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
-                    fillMode === 'none'
-                      ? 'bg-blue-600 text-white font-bold'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  枠線のみ
-                </button>
-                <button
-                  onClick={() => onFillModeChange('semi')}
-                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
-                    fillMode === 'semi'
-                      ? 'bg-blue-600 text-white font-bold'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                  title="下の文字が透けて見えるハイライト（透明度25%）"
-                >
-                  透かし
-                </button>
-                <button
-                  onClick={() => onFillModeChange('solid')}
-                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
-                    fillMode === 'solid'
-                      ? 'bg-blue-600 text-white font-bold'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  ベタ塗り
-                </button>
+          ) : (
+            <>
+              {/* カラーパレット */}
+              <div className="flex items-center gap-1.5 border-l border-slate-800 pl-3">
+                <span className="text-slate-400 font-medium">色:</span>
+                <div className="flex items-center gap-1">
+                  {COLOR_PALETTE.map((c) => (
+                    <button
+                      key={c.value}
+                      onClick={() => onDrawColorChange(c.value)}
+                      className={`w-5 h-5 rounded-full border transition cursor-pointer ${
+                        drawColor === c.value
+                          ? `ring-2 ${c.ring} scale-110 border-white`
+                          : 'border-slate-700 opacity-80 hover:opacity-100'
+                      }`}
+                      style={{ backgroundColor: c.value }}
+                      title={c.label}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
 
-          {/* 線の太さ（線・矢印・囲みの場合） */}
-          {activeTool !== 'text' && activeTool !== 'check' && (
-            <div className="flex items-center gap-2 border-l border-slate-800 pl-3">
-              <span className="text-slate-400 font-medium">太さ:</span>
-              <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
-                {[1, 2, 4].map((w) => (
-                  <button
-                    key={w}
-                    onClick={() => onLineWidthChange(w)}
-                    className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
-                      lineWidth === w
-                        ? 'bg-blue-600 text-white font-bold'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {w === 1 ? '細' : w === 2 ? '中' : '太'}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+              {/* 塗りモード（矩形・多角形・丸の場合） */}
+              {(activeTool === 'rect' || activeTool === 'polygon' || activeTool === 'circle') && (
+                <div className="flex items-center gap-2 border-l border-slate-800 pl-3">
+                  <span className="text-slate-400 font-medium">塗り:</span>
+                  <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+                    <button
+                      onClick={() => onFillModeChange('none')}
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
+                        fillMode === 'none'
+                          ? 'bg-blue-600 text-white font-bold'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      枠線のみ
+                    </button>
+                    <button
+                      onClick={() => onFillModeChange('semi')}
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
+                        fillMode === 'semi'
+                          ? 'bg-blue-600 text-white font-bold'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title="下の文字が透けて見えるハイライト（透明度25%）"
+                    >
+                      透かし
+                    </button>
+                    <button
+                      onClick={() => onFillModeChange('solid')}
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
+                        fillMode === 'solid'
+                          ? 'bg-blue-600 text-white font-bold'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      ベタ塗り
+                    </button>
+                  </div>
+                </div>
+              )}
 
-          {/* 矢印の端点設定（矢印・直線ツールの場合） */}
-          {(activeTool === 'arrow' || activeTool === 'line') && (
-            <div className="flex items-center gap-2 border-l border-slate-800 pl-3">
-              <span className="text-slate-400 font-medium">矢印:</span>
-              <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
-                <button
-                  onClick={() => onArrowHeadChange('end')}
-                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
-                    arrowHead === 'end'
-                      ? 'bg-blue-600 text-white font-bold'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                  title="終点に矢印（引き出し線）"
-                >
-                  終点 ➔
-                </button>
-                <button
-                  onClick={() => onArrowHeadChange('start')}
-                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
-                    arrowHead === 'start'
-                      ? 'bg-blue-600 text-white font-bold'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                  title="始点に矢印"
-                >
-                  始点 ⬅
-                </button>
-                <button
-                  onClick={() => onArrowHeadChange('both')}
-                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
-                    arrowHead === 'both'
-                      ? 'bg-blue-600 text-white font-bold'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                  title="両端に矢印（寸法・範囲指示）"
-                >
-                  両端 ⬌
-                </button>
-                <button
-                  onClick={() => onArrowHeadChange('none')}
-                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
-                    arrowHead === 'none'
-                      ? 'bg-blue-600 text-white font-bold'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                  title="矢印なし（直線）"
-                >
-                  なし ─
-                </button>
-              </div>
-            </div>
-          )}
+              {/* 線の太さ（直線・囲みの場合） */}
+              {activeTool !== 'text' && activeTool !== 'check' && (
+                <div className="flex items-center gap-2 border-l border-slate-800 pl-3">
+                  <span className="text-slate-400 font-medium">太さ:</span>
+                  <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+                    {[1, 2, 4].map((w) => (
+                      <button
+                        key={w}
+                        onClick={() => onLineWidthChange(w)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
+                          lineWidth === w
+                            ? 'bg-blue-600 text-white font-bold'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {w === 1 ? '細' : w === 2 ? '中' : '太'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
-          {/* 文字サイズ（テキストの場合） */}
-          {activeTool === 'text' && (
-            <div className="flex items-center gap-2 border-l border-slate-800 pl-3">
-              <span className="text-slate-400 font-medium">文字サイズ:</span>
-              <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
-                {[
-                  { label: '小 (12)', size: 12 },
-                  { label: '中 (16)', size: 16 },
-                  { label: '大 (20)', size: 20 },
-                  { label: '特大 (24)', size: 24 },
-                ].map((s) => (
-                  <button
-                    key={s.size}
-                    onClick={() => onFontSizeChange(s.size)}
-                    className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
-                      fontSize === s.size
-                        ? 'bg-blue-600 text-white font-bold'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+              {/* 矢印の端点設定（直線ツールの場合） */}
+              {activeTool === 'line' && (
+                <div className="flex items-center gap-2 border-l border-slate-800 pl-3">
+                  <span className="text-slate-400 font-medium">矢印:</span>
+                  <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+                    <button
+                      onClick={() => onArrowHeadChange('none')}
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
+                        arrowHead === 'none'
+                          ? 'bg-blue-600 text-white font-bold'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title="矢印なし（通常の直線）"
+                    >
+                      なし ─
+                    </button>
+                    <button
+                      onClick={() => onArrowHeadChange('end')}
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
+                        arrowHead === 'end'
+                          ? 'bg-blue-600 text-white font-bold'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title="終点に矢印（引き出し線）"
+                    >
+                      終点 ➔
+                    </button>
+                    <button
+                      onClick={() => onArrowHeadChange('start')}
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
+                        arrowHead === 'start'
+                          ? 'bg-blue-600 text-white font-bold'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title="始点に矢印"
+                    >
+                      始点 ⬅
+                    </button>
+                    <button
+                      onClick={() => onArrowHeadChange('both')}
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
+                        arrowHead === 'both'
+                          ? 'bg-blue-600 text-white font-bold'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title="両端に矢印（寸法・範囲指示）"
+                    >
+                      両端 ⬌
+                    </button>
+                  </div>
+                </div>
+              )}
 
-          {/* チェックマークのサイズ設定 */}
-          {activeTool === 'check' && (
-            <div className="flex items-center gap-2 border-l border-slate-800 pl-3">
-              <span className="text-slate-400 font-medium">サイズ:</span>
-              <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
-                {[
-                  { label: '小 (14)', size: 14 },
-                  { label: '中 (22)', size: 22 },
-                  { label: '大 (30)', size: 30 },
-                ].map((s) => (
-                  <button
-                    key={s.size}
-                    onClick={() => onCheckSizeChange(s.size)}
-                    className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
-                      checkSize === s.size
-                        ? 'bg-blue-600 text-white font-bold'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+              {/* 文字サイズ（テキストの場合） */}
+              {activeTool === 'text' && (
+                <div className="flex items-center gap-2 border-l border-slate-800 pl-3">
+                  <span className="text-slate-400 font-medium">文字サイズ:</span>
+                  <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+                    {[
+                      { label: '小 (12)', size: 12 },
+                      { label: '中 (16)', size: 16 },
+                      { label: '大 (20)', size: 20 },
+                      { label: '特大 (24)', size: 24 },
+                    ].map((s) => (
+                      <button
+                        key={s.size}
+                        onClick={() => onFontSizeChange(s.size)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
+                          fontSize === s.size
+                            ? 'bg-blue-600 text-white font-bold'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* チェックマークのサイズ設定 (8, 14, 20) */}
+              {activeTool === 'check' && (
+                <div className="flex items-center gap-2 border-l border-slate-800 pl-3">
+                  <span className="text-slate-400 font-medium">サイズ:</span>
+                  <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+                    {[
+                      { label: '極小 (8)', size: 8 },
+                      { label: '小 (14)', size: 14 },
+                      { label: '中 (20)', size: 20 },
+                    ].map((s) => (
+                      <button
+                        key={s.size}
+                        onClick={() => onCheckSizeChange(s.size)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
+                          checkSize === s.size
+                            ? 'bg-blue-600 text-white font-bold'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
           {/* 現在ページの描画オブジェクト数 */}

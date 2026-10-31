@@ -304,13 +304,15 @@ export async function applyRedactions(
             const len = Math.hypot(dx, dy);
             if (len >= 5) {
               const angle = Math.atan2(dy, dx);
-              const headLen = Math.min(len * 0.4, 10 + (d.lineWidth || 2) * 2);
+              // 美しいシャープなプロ製図開度（片側18度 / 全開36度）
+              const arrowAngle = Math.PI / 10;
+              const headLen = Math.min(len * 0.35, 12 + (d.lineWidth || 2) * 2);
 
               if (mode === 'end' || mode === 'both') {
-                const ax1 = x2 - headLen * Math.cos(angle - Math.PI / 6);
-                const ay1 = y2 - headLen * Math.sin(angle - Math.PI / 6);
-                const ax2 = x2 - headLen * Math.cos(angle + Math.PI / 6);
-                const ay2 = y2 - headLen * Math.sin(angle + Math.PI / 6);
+                const ax1 = x2 - headLen * Math.cos(angle - arrowAngle);
+                const ay1 = y2 - headLen * Math.sin(angle - arrowAngle);
+                const ax2 = x2 - headLen * Math.cos(angle + arrowAngle);
+                const ay2 = y2 - headLen * Math.sin(angle + arrowAngle);
 
                 const h1 = page.createAnnotation('Line');
                 h1.setLine([ax1, ay1], [x2, y2]);
@@ -326,10 +328,10 @@ export async function applyRedactions(
               }
 
               if (mode === 'start' || mode === 'both') {
-                const bx1 = x1 + headLen * Math.cos(angle - Math.PI / 6);
-                const by1 = y1 + headLen * Math.sin(angle - Math.PI / 6);
-                const bx2 = x1 + headLen * Math.cos(angle + Math.PI / 6);
-                const by2 = y1 + headLen * Math.sin(angle + Math.PI / 6);
+                const bx1 = x1 + headLen * Math.cos(angle - arrowAngle);
+                const by1 = y1 + headLen * Math.sin(angle - arrowAngle);
+                const bx2 = x1 + headLen * Math.cos(angle + arrowAngle);
+                const by2 = y1 + headLen * Math.sin(angle + arrowAngle);
 
                 const h1 = page.createAnnotation('Line');
                 h1.setLine([bx1, by1], [x1, y1]);
@@ -411,7 +413,7 @@ export async function applyRedactions(
           if (d.x === undefined || d.y === undefined) continue;
           const ox = d.x;
           const oy = d.y;
-          const s = d.fontSize || 22;
+          const s = d.fontSize || 14;
           const p1x = ox + s * 0.15;
           const p1y = oy + s * 0.55;
           const p2x = ox + s * 0.42;

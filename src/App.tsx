@@ -49,7 +49,7 @@ export default function App() {
   const [fontSize, setFontSize] = useState<number>(16)
   const [fillMode, setFillMode] = useState<FillMode>('none')
   const [arrowHead, setArrowHead] = useState<ArrowHead>('end')
-  const [checkSize, setCheckSize] = useState<number>(22)
+  const [checkSize, setCheckSize] = useState<number>(14)
   const [drawings, setDrawings] = useState<DrawingItem[]>([])
 
   // 操作履歴 (Undo 用)

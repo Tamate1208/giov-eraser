@@ -26,24 +26,26 @@ function getArrowHeadPath(
   if (len < 5) return ''
 
   const angle = Math.atan2(dy, dx)
-  const headLen = Math.min(len * 0.4, 12 + lineWidth * 2)
+  // 美しいシャープなプロ製図開度（片側18度 / 全開36度）
+  const arrowAngle = Math.PI / 10
+  const headLen = Math.min(len * 0.35, 14 + lineWidth * 2)
   let d = ''
 
   // 終点側の矢じり
   if (mode === 'end' || mode === 'both') {
-    const ax1 = x2 - headLen * Math.cos(angle - Math.PI / 6)
-    const ay1 = y2 - headLen * Math.sin(angle - Math.PI / 6)
-    const ax2 = x2 - headLen * Math.cos(angle + Math.PI / 6)
-    const ay2 = y2 - headLen * Math.sin(angle + Math.PI / 6)
+    const ax1 = x2 - headLen * Math.cos(angle - arrowAngle)
+    const ay1 = y2 - headLen * Math.sin(angle - arrowAngle)
+    const ax2 = x2 - headLen * Math.cos(angle + arrowAngle)
+    const ay2 = y2 - headLen * Math.sin(angle + arrowAngle)
     d += `M ${ax1} ${ay1} L ${x2} ${y2} L ${ax2} ${ay2} `
   }
 
   // 始点側の矢じり
   if (mode === 'start' || mode === 'both') {
-    const bx1 = x1 + headLen * Math.cos(angle - Math.PI / 6)
-    const by1 = y1 + headLen * Math.sin(angle - Math.PI / 6)
-    const bx2 = x1 + headLen * Math.cos(angle + Math.PI / 6)
-    const by2 = y1 + headLen * Math.sin(angle + Math.PI / 6)
+    const bx1 = x1 + headLen * Math.cos(angle - arrowAngle)
+    const by1 = y1 + headLen * Math.sin(angle - arrowAngle)
+    const bx2 = x1 + headLen * Math.cos(angle + arrowAngle)
+    const by2 = y1 + headLen * Math.sin(angle + arrowAngle)
     d += `M ${bx1} ${by1} L ${x1} ${y1} L ${bx2} ${by2} `
   }
 
@@ -124,6 +126,17 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   // 選択中のアイテムID（ホバーまたはクリックで削除できるように）
   const [hoveredDrawingId, setHoveredDrawingId] = useState<string | null>(null)
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null)
+
+  // 描画アイテムクリック処理（描画消しゴムツール時は即座に削除）
+  const handleItemClick = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (appMode === 'draw' && activeTool === 'draw_eraser') {
+      onRemoveDrawing(id)
+      if (selectedDrawingId === id) setSelectedDrawingId(null)
+      return
+    }
+    setSelectedDrawingId(id)
+  }
 
   // 選択中アイテムの Delete / BackSpace キー削除
   useEffect(() => {
@@ -210,6 +223,11 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     const relX = (e.clientX - rect.left) / zoom
     const relY = (e.clientY - rect.top) / zoom
 
+    // 描画モード: 描画消しゴム（ドラッグ操作不要、描画要素をクリックして削除）
+    if (appMode === 'draw' && activeTool === 'draw_eraser') {
+      return
+    }
+
     // 描画モード: テキスト
     if (appMode === 'draw' && activeTool === 'text') {
       setTextInput({
@@ -254,7 +272,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       return
     }
 
-    // それ以外のツール（消しゴム、矢印、直線、矩形、丸）はドラッグ開始
+    // それ以外のツール（消しゴム、直線、矩形、丸）はドラッグ開始
     isDraggingRef.current = true
     dragStartRef.current = { x: relX, y: relY }
     dragCurrentRef.current = { x: relX, y: relY }
@@ -331,15 +349,15 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       })
     } else if (appMode === 'draw') {
       // 描画アイテムの追加
-      if (activeTool === 'arrow' || activeTool === 'line') {
+      if (activeTool === 'line' || activeTool === 'arrow') {
         onAddDrawing({
           pageIndex: pageInfo.index,
-          tool: activeTool,
+          tool: 'line',
           color: drawColor,
           lineWidth,
           fontSize,
           fillMode: 'none',
-          arrowHead: activeTool === 'arrow' ? arrowHead : 'none',
+          arrowHead: arrowHead,
           points: [
             { x: start.x / 1.5, y: start.y / 1.5 },
             { x: current.x / 1.5, y: current.y / 1.5 },
@@ -431,6 +449,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
             {drawings.map((item) => {
               const isHovered = hoveredDrawingId === item.id
               const isSelected = selectedDrawingId === item.id
+              const isEraserMode = appMode === 'draw' && activeTool === 'draw_eraser'
 
               if (item.tool === 'arrow' || item.tool === 'line') {
                 if (!item.points || item.points.length < 2) return null
@@ -449,17 +468,14 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 return (
                   <g
                     key={item.id}
-                    className="pointer-events-auto cursor-pointer group"
+                    className={`pointer-events-auto cursor-pointer group ${isEraserMode ? 'hover:opacity-60' : ''}`}
                     onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setSelectedDrawingId(item.id)
-                    }}
+                    onClick={(e) => handleItemClick(item.id, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
-                    {/* 選択時の外枠ハイライト */}
-                    {isSelected && (
+                    {/* 選択時の外枠ハイライト または 消しゴムホバー時の赤ハイライト */}
+                    {isSelected && !isEraserMode && (
                       <line
                         x1={x1}
                         y1={y1}
@@ -471,6 +487,18 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                         strokeLinecap="round"
                       />
                     )}
+                    {isEraserMode && isHovered && (
+                      <line
+                        x1={x1}
+                        y1={y1}
+                        x2={x2}
+                        y2={y2}
+                        stroke="#ef4444"
+                        strokeWidth={item.lineWidth + 8}
+                        strokeOpacity="0.5"
+                        strokeLinecap="round"
+                      />
+                    )}
 
                     {/* 直線本体 */}
                     <line
@@ -478,7 +506,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       y1={y1}
                       x2={x2}
                       y2={y2}
-                      stroke={item.color}
+                      stroke={isEraserMode && isHovered ? '#ef4444' : item.color}
                       strokeWidth={item.lineWidth * (isHovered || isSelected ? 1.3 : 1)}
                       strokeLinecap="round"
                     />
@@ -487,7 +515,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     {arrowPath && (
                       <path
                         d={arrowPath}
-                        stroke={item.color}
+                        stroke={isEraserMode && isHovered ? '#ef4444' : item.color}
                         strokeWidth={item.lineWidth * (isHovered || isSelected ? 1.3 : 1)}
                         fill="none"
                         strokeLinecap="round"
@@ -533,16 +561,13 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 return (
                   <g
                     key={item.id}
-                    className="pointer-events-auto cursor-pointer group"
+                    className={`pointer-events-auto cursor-pointer group ${isEraserMode ? 'hover:opacity-60' : ''}`}
                     onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setSelectedDrawingId(item.id)
-                    }}
+                    onClick={(e) => handleItemClick(item.id, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
-                    {isSelected && (
+                    {isSelected && !isEraserMode && (
                       <rect
                         x={rx - 4}
                         y={ry - 4}
@@ -555,14 +580,27 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                         rx="4"
                       />
                     )}
+                    {isEraserMode && isHovered && (
+                      <rect
+                        x={rx - 4}
+                        y={ry - 4}
+                        width={rw + 8}
+                        height={rh + 8}
+                        fill="none"
+                        stroke="#ef4444"
+                        strokeWidth="3"
+                        strokeDasharray="4 2"
+                        rx="4"
+                      />
+                    )}
                     <rect
                       x={rx}
                       y={ry}
                       width={rw}
                       height={rh}
-                      fill={fillColor}
-                      fillOpacity={fillOpacity}
-                      stroke={item.color}
+                      fill={isEraserMode && isHovered ? '#ef4444' : fillColor}
+                      fillOpacity={isEraserMode && isHovered ? 0.2 : fillOpacity}
+                      stroke={isEraserMode && isHovered ? '#ef4444' : item.color}
                       strokeWidth={item.lineWidth}
                     />
                     {(isHovered || isSelected) && (
@@ -602,16 +640,13 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 return (
                   <g
                     key={item.id}
-                    className="pointer-events-auto cursor-pointer group"
+                    className={`pointer-events-auto cursor-pointer group ${isEraserMode ? 'hover:opacity-60' : ''}`}
                     onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setSelectedDrawingId(item.id)
-                    }}
+                    onClick={(e) => handleItemClick(item.id, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
-                    {isSelected && (
+                    {isSelected && !isEraserMode && (
                       <ellipse
                         cx={cx}
                         cy={cy}
@@ -623,14 +658,26 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                         strokeDasharray="4 2"
                       />
                     )}
+                    {isEraserMode && isHovered && (
+                      <ellipse
+                        cx={cx}
+                        cy={cy}
+                        rx={rx + 4}
+                        ry={ry + 4}
+                        fill="none"
+                        stroke="#ef4444"
+                        strokeWidth="3"
+                        strokeDasharray="4 2"
+                      />
+                    )}
                     <ellipse
                       cx={cx}
                       cy={cy}
                       rx={rx}
                       ry={ry}
-                      fill={fillColor}
-                      fillOpacity={fillOpacity}
-                      stroke={item.color}
+                      fill={isEraserMode && isHovered ? '#ef4444' : fillColor}
+                      fillOpacity={isEraserMode && isHovered ? 0.2 : fillOpacity}
+                      stroke={isEraserMode && isHovered ? '#ef4444' : item.color}
                       strokeWidth={item.lineWidth}
                     />
                     {(isHovered || isSelected) && (
@@ -666,16 +713,13 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 return (
                   <g
                     key={item.id}
-                    className="pointer-events-auto cursor-pointer group"
+                    className={`pointer-events-auto cursor-pointer group ${isEraserMode ? 'hover:opacity-60' : ''}`}
                     onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setSelectedDrawingId(item.id)
-                    }}
+                    onClick={(e) => handleItemClick(item.id, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
-                    {isSelected && (
+                    {isSelected && !isEraserMode && (
                       <polygon
                         points={pts}
                         fill="none"
@@ -684,11 +728,20 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                         strokeOpacity="0.4"
                       />
                     )}
+                    {isEraserMode && isHovered && (
+                      <polygon
+                        points={pts}
+                        fill="none"
+                        stroke="#ef4444"
+                        strokeWidth={item.lineWidth + 6}
+                        strokeOpacity="0.6"
+                      />
+                    )}
                     <polygon
                       points={pts}
-                      fill={fillColor}
-                      fillOpacity={fillOpacity}
-                      stroke={item.color}
+                      fill={isEraserMode && isHovered ? '#ef4444' : fillColor}
+                      fillOpacity={isEraserMode && isHovered ? 0.2 : fillOpacity}
+                      stroke={isEraserMode && isHovered ? '#ef4444' : item.color}
                       strokeWidth={item.lineWidth}
                       strokeLinejoin="round"
                     />
@@ -715,21 +768,18 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 if (item.x === undefined || item.y === undefined) return null
                 const ox = item.x * 1.5
                 const oy = item.y * 1.5
-                const s = (item.fontSize || 22) * 1.5
+                const s = (item.fontSize || 14) * 1.5
 
                 return (
                   <g
                     key={item.id}
-                    className="pointer-events-auto cursor-pointer group"
+                    className={`pointer-events-auto cursor-pointer group ${isEraserMode ? 'hover:opacity-60' : ''}`}
                     onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setSelectedDrawingId(item.id)
-                    }}
+                    onClick={(e) => handleItemClick(item.id, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
-                    {isSelected && (
+                    {isSelected && !isEraserMode && (
                       <rect
                         x={ox - 3}
                         y={oy - 3}
@@ -742,10 +792,23 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                         rx="4"
                       />
                     )}
+                    {isEraserMode && isHovered && (
+                      <rect
+                        x={ox - 3}
+                        y={oy - 3}
+                        width={s + 6}
+                        height={s + 6}
+                        fill="none"
+                        stroke="#ef4444"
+                        strokeWidth="2.5"
+                        strokeDasharray="3 2"
+                        rx="4"
+                      />
+                    )}
                     <path
                       d={`M ${ox + s * 0.15} ${oy + s * 0.55} L ${ox + s * 0.42} ${oy + s * 0.85} L ${ox + s * 0.9} ${oy + s * 0.18}`}
                       fill="none"
-                      stroke={item.color}
+                      stroke={isEraserMode && isHovered ? '#ef4444' : item.color}
                       strokeWidth={item.lineWidth || Math.max(2.5, s * 0.12)}
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -779,12 +842,9 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 return (
                   <g
                     key={item.id}
-                    className="pointer-events-auto cursor-pointer group"
+                    className={`pointer-events-auto cursor-pointer group ${isEraserMode ? 'hover:opacity-60' : ''}`}
                     onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setSelectedDrawingId(item.id)
-                    }}
+                    onClick={(e) => handleItemClick(item.id, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
@@ -799,7 +859,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                         className="shadow-sm"
                       />
                     )}
-                    {isSelected && (
+                    {isSelected && !isEraserMode && (
                       <rect
                         x={tx - 6}
                         y={ty - fontPx}
@@ -812,10 +872,23 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                         rx="3"
                       />
                     )}
+                    {isEraserMode && isHovered && (
+                      <rect
+                        x={tx - 6}
+                        y={ty - fontPx}
+                        width={estW + 4}
+                        height={fontPx + 10}
+                        fill="none"
+                        stroke="#ef4444"
+                        strokeWidth="2.5"
+                        strokeDasharray="3 2"
+                        rx="3"
+                      />
+                    )}
                     <text
                       x={tx}
                       y={ty}
-                      fill={item.color}
+                      fill={isEraserMode && isHovered ? '#ef4444' : item.color}
                       fontSize={fontPx}
                       fontFamily="system-ui, -apple-system, sans-serif"
                       fontWeight="bold"
@@ -893,7 +966,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       strokeWidth={lineWidth}
                       strokeLinecap="round"
                     />
-                    {activeTool === 'arrow' && (
+                    {arrowHead !== 'none' && (
                       <path
                         d={getArrowHeadPath(
                           dragPreview.startX,
@@ -974,6 +1047,8 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 ? 'cursor-text'
                 : activeTool === 'check'
                 ? 'cursor-pointer'
+                : activeTool === 'draw_eraser'
+                ? 'cursor-pointer'
                 : 'cursor-crosshair'
             }`}
             title={
@@ -983,6 +1058,10 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 ? 'クリックしてテキストを入力'
                 : activeTool === 'polygon'
                 ? 'クリックで頂点を結び、始点クリックまたはダブルクリックで完了'
+                : activeTool === 'check'
+                ? 'クリックしてチェックマークを配置'
+                : activeTool === 'draw_eraser'
+                ? '画面上の描画オブジェクトをクリックすると即座に消去できます'
                 : 'ドラッグして描画'
             }
           >
