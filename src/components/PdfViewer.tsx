@@ -24,94 +24,92 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   const containerRef = useRef<HTMLDivElement>(null)
   const imageRef = useRef<HTMLImageElement>(null)
 
-  // ドラッグ選択の状態
-  const [isDragging, setIsDragging] = useState(false)
-  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
-  const [dragCurrent, setDragCurrent] = useState<{ x: number; y: number } | null>(null)
+  const overlayRef = useRef<HTMLDivElement>(null)
+  const isDraggingRef = useRef(false)
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null)
+  const dragCurrentRef = useRef<{ x: number; y: number } | null>(null)
 
-  // 画像要素の実際の表示サイズと位置
-  const [imgLayout, setImgLayout] = useState<{ width: number; height: number; left: number; top: number }>({
-    width: 0,
-    height: 0,
-    left: 0,
-    top: 0,
-  })
+  // プレビュー枠表示用の state
+  const [dragPreview, setDragPreview] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
 
-  // 画像サイズ更新
-  const updateLayout = () => {
-    if (imageRef.current) {
-      const rect = imageRef.current.getBoundingClientRect()
-      const containerRect = containerRef.current?.getBoundingClientRect() || { left: 0, top: 0 }
-      setImgLayout({
-        width: rect.width,
-        height: rect.height,
-        left: rect.left - containerRect.left,
-        top: rect.top - containerRect.top,
-      })
-    }
+  // ポインターダウン: ドラッグ開始 (PointerCapture で確実追従)
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!pageInfo || !overlayRef.current) return
+    e.preventDefault()
+    e.stopPropagation()
+
+    const target = e.currentTarget
+    try {
+      target.setPointerCapture(e.pointerId)
+    } catch {}
+
+    const rect = target.getBoundingClientRect()
+    // ズーム倍率で割ってローカル座標（ズーム前のCSSピクセル）を算出
+    const relX = (e.clientX - rect.left) / zoom
+    const relY = (e.clientY - rect.top) / zoom
+
+    isDraggingRef.current = true
+    dragStartRef.current = { x: relX, y: relY }
+    dragCurrentRef.current = { x: relX, y: relY }
+    setDragPreview({ x: relX, y: relY, w: 0, h: 0 })
   }
 
-  useEffect(() => {
-    updateLayout()
-  }, [pageImage, zoom])
+  // ポインター移動: ドラッグ追従
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingRef.current || !dragStartRef.current || !pageInfo || !overlayRef.current) return
+    e.preventDefault()
 
-  // マウスダウン: ドラッグ開始
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (!imageRef.current || !pageInfo) return
-    const rect = imageRef.current.getBoundingClientRect()
+    const rect = overlayRef.current.getBoundingClientRect()
+    const maxX = pageInfo.width * 1.5
+    const maxY = pageInfo.height * 1.5
 
-    // 画像内の相対座標 (0〜width, 0〜height)
-    const relX = e.clientX - rect.left
-    const relY = e.clientY - rect.top
+    const relX = Math.max(0, Math.min(maxX, (e.clientX - rect.left) / zoom))
+    const relY = Math.max(0, Math.min(maxY, (e.clientY - rect.top) / zoom))
 
-    if (relX >= 0 && relX <= rect.width && relY >= 0 && relY <= rect.height) {
-      setIsDragging(true)
-      setDragStart({ x: relX, y: relY })
-      setDragCurrent({ x: relX, y: relY })
-    }
+    dragCurrentRef.current = { x: relX, y: relY }
+
+    const sx = dragStartRef.current.x
+    const sy = dragStartRef.current.y
+    setDragPreview({
+      x: Math.min(sx, relX),
+      y: Math.min(sy, relY),
+      w: Math.abs(relX - sx),
+      h: Math.abs(relY - sy),
+    })
   }
 
-  // マウス移動: ドラッグ中
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging || !imageRef.current) return
-    const rect = imageRef.current.getBoundingClientRect()
+  // ポインターアップ: ドラッグ完了 -> 確実に消しゴム枠を追加
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const isDragging = isDraggingRef.current
+    const start = dragStartRef.current
+    const current = dragCurrentRef.current
 
-    const relX = Math.max(0, Math.min(rect.width, e.clientX - rect.left))
-    const relY = Math.max(0, Math.min(rect.height, e.clientY - rect.top))
+    isDraggingRef.current = false
+    dragStartRef.current = null
+    dragCurrentRef.current = null
+    setDragPreview(null)
 
-    setDragCurrent({ x: relX, y: relY })
-  }
+    if (!isDragging || !start || !current || !pageInfo) return
 
-  // マウスアップ: ドラッグ完了 -> PDF座標系に変換して矩形追加
-  const handleMouseUp = () => {
-    if (!isDragging || !dragStart || !dragCurrent || !pageInfo || !imageRef.current) {
-      setIsDragging(false)
-      setDragStart(null)
-      setDragCurrent(null)
-      return
-    }
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    } catch {}
 
-    const dx = Math.abs(dragCurrent.x - dragStart.x)
-    const dy = Math.abs(dragCurrent.y - dragStart.y)
+    const dx = Math.abs(current.x - start.x)
+    const dy = Math.abs(current.y - start.y)
 
-    // 最小サイズ判定 (5px以上ドラッグした場合のみ追加)
-    if (dx >= 5 && dy >= 5) {
-      const minScreenX = Math.min(dragStart.x, dragCurrent.x)
-      const maxScreenX = Math.max(dragStart.x, dragCurrent.x)
-      const minScreenY = Math.min(dragStart.y, dragCurrent.y)
-      const maxScreenY = Math.max(dragStart.y, dragCurrent.y)
+    // 最小4pxドラッグした場合に追加
+    if (dx >= 4 && dy >= 4) {
+      const minX = Math.min(start.x, current.x)
+      const maxX = Math.max(start.x, current.x)
+      const minY = Math.min(start.y, current.y)
+      const maxY = Math.max(start.y, current.y)
 
-      const displayW = imageRef.current.clientWidth
-      const displayH = imageRef.current.clientHeight
-
-      // 画面座標 (左上原点) から PDF/MuPDF座標系 (左上原点 [x0, y0, x1, y1]) への正規化変換
-      const scaleX = pageInfo.width / displayW
-      const scaleY = pageInfo.height / displayH
-
-      const pdfX0 = minScreenX * scaleX
-      const pdfX1 = maxScreenX * scaleX
-      const pdfY0 = minScreenY * scaleY
-      const pdfY1 = maxScreenY * scaleY
+      // 画面表示は 1.5倍 なので、PDFポイント座標系へは 1.5 で除算
+      const pdfX0 = minX / 1.5
+      const pdfX1 = maxX / 1.5
+      const pdfY0 = minY / 1.5
+      const pdfY1 = maxY / 1.5
 
       onAddRedaction({
         x0: pdfX0,
@@ -122,25 +120,15 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         color: colorMode,
       })
     }
-
-    setIsDragging(false)
-    setDragStart(null)
-    setDragCurrent(null)
   }
 
   // PDF/MuPDF座標 [x0, y0, x1, y1] (左上原点) を画面CSSスタイル (top, left, width, height) に変換
   const getScreenStyle = (r: RedactRect) => {
-    if (!pageInfo || !imageRef.current) return { display: 'none' }
-    const displayW = imageRef.current.clientWidth
-    const displayH = imageRef.current.clientHeight
-
-    const scaleX = displayW / pageInfo.width
-    const scaleY = displayH / pageInfo.height
-
-    const left = r.x0 * scaleX
-    const top = r.y0 * scaleY
-    const width = (r.x1 - r.x0) * scaleX
-    const height = (r.y1 - r.y0) * scaleY
+    if (!pageInfo) return { display: 'none' }
+    const left = r.x0 * 1.5
+    const top = r.y0 * 1.5
+    const width = (r.x1 - r.x0) * 1.5
+    const height = (r.y1 - r.y0) * 1.5
 
     return {
       left: `${left}px`,
@@ -153,17 +141,16 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   return (
     <div
       ref={containerRef}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
       className="flex-1 overflow-auto bg-slate-950 p-8 flex items-center justify-center relative select-none"
-      style={{ cursor: isDragging ? 'crosshair' : 'default' }}
     >
       {pageImage && pageInfo ? (
         <div
-          className="relative shadow-2xl rounded-sm ring-1 ring-slate-800 transition-all duration-150"
+          className="relative shadow-2xl rounded-sm ring-1 ring-slate-800 transition-transform duration-100"
           style={{
             transform: `scale(${zoom})`,
             transformOrigin: 'center center',
+            width: `${pageInfo.width * 1.5}px`,
+            height: `${pageInfo.height * 1.5}px`,
           }}
         >
           {/* PDF ページ画像 */}
@@ -171,18 +158,54 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
             ref={imageRef}
             src={pageImage}
             alt={`Page ${pageInfo.index + 1}`}
-            onLoad={updateLayout}
-            onMouseDown={handleMouseDown}
             draggable={false}
-            className="block max-w-none bg-white pointer-events-auto cursor-crosshair"
+            className="block max-w-none bg-white select-none pointer-events-none"
             style={{
               width: `${pageInfo.width * 1.5}px`,
               height: `${pageInfo.height * 1.5}px`,
             }}
           />
 
-          {/* 既存の墨消し枠オーバーレイ */}
-          <div className="absolute inset-0 pointer-events-none">
+          {/* ドラッグ操作専用オーバーレイ (PointerCapture) */}
+          <div
+            ref={overlayRef}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={() => {
+              isDraggingRef.current = false
+              dragStartRef.current = null
+              dragCurrentRef.current = null
+              setDragPreview(null)
+            }}
+            className="absolute inset-0 cursor-crosshair touch-none select-none z-10"
+            title="マウスドラッグで消去したい範囲を囲んでください"
+          >
+            {/* ドラッグ中のプレビュー枠 */}
+            {dragPreview && (
+              <div
+                style={{
+                  left: `${dragPreview.x}px`,
+                  top: `${dragPreview.y}px`,
+                  width: `${dragPreview.w}px`,
+                  height: `${dragPreview.h}px`,
+                }}
+                className={`absolute border-2 border-dashed pointer-events-none transition-none shadow-lg ${
+                  colorMode === 'white'
+                    ? 'bg-white/70 border-slate-400 ring-2 ring-white/60'
+                    : 'bg-rose-600/40 border-rose-500 ring-2 ring-rose-500/40'
+                }`}
+              >
+                <div className="absolute top-1 left-1.5 px-1.5 py-0.5 rounded bg-black/75 text-[10px] text-white font-mono flex items-center gap-1 shadow">
+                  <Eraser className="w-2.5 h-2.5 text-rose-400" />
+                  消去範囲
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 既存の墨消し枠オーバーレイ (z-20 で削除ボタンをクリック可能に) */}
+          <div className="absolute inset-0 pointer-events-none z-20">
             {redactions.map((r) => {
               const style = getScreenStyle(r)
               const isWhite = r.color === 'white'
@@ -193,8 +216,8 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                   style={style}
                   className={`absolute pointer-events-auto group border transition-all duration-100 ${
                     isWhite
-                      ? 'bg-white/80 border-slate-300 ring-1 ring-white/50 shadow-sm'
-                      : 'bg-black/85 border-rose-500/80 ring-1 ring-black/50 shadow-md'
+                      ? 'bg-white/85 border-slate-300 ring-1 ring-white/50 shadow-sm'
+                      : 'bg-black/90 border-rose-500/80 ring-1 ring-black/50 shadow-md'
                   }`}
                 >
                   {/* 消しゴムマーク */}
@@ -210,7 +233,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       e.stopPropagation()
                       onRemoveRedaction(r.id)
                     }}
-                    className="absolute -top-2.5 -right-2.5 w-5 h-5 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 shadow-md transition transform hover:scale-110 active:scale-95"
+                    className="absolute -top-2.5 -right-2.5 w-5 h-5 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 shadow-md transition transform hover:scale-110 active:scale-95 cursor-pointer"
                     title="この消しゴム枠を削除"
                   >
                     <X className="w-3 h-3 stroke-[2.5]" />
@@ -218,28 +241,6 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 </div>
               )
             })}
-
-            {/* ドラッグ中のプレビュー枠 */}
-            {isDragging && dragStart && dragCurrent && (
-              <div
-                style={{
-                  left: `${Math.min(dragStart.x, dragCurrent.x)}px`,
-                  top: `${Math.min(dragStart.y, dragCurrent.y)}px`,
-                  width: `${Math.abs(dragCurrent.x - dragStart.x)}px`,
-                  height: `${Math.abs(dragCurrent.y - dragStart.y)}px`,
-                }}
-                className={`absolute border-2 border-dashed pointer-events-none transition-none shadow-lg ${
-                  colorMode === 'white'
-                    ? 'bg-white/70 border-slate-400 ring-2 ring-white/60'
-                    : 'bg-rose-600/40 border-rose-500 ring-2 ring-rose-500/40'
-                }`}
-              >
-                <div className="absolute top-1 left-1.5 px-1.5 py-0.5 rounded bg-black/75 text-[10px] text-white font-mono flex items-center gap-1 shadow">
-                  <Eraser className="w-2.5 h-2.5 text-rose-400" />
-                  消去範囲
-                </div>
-              </div>
-            )}
           </div>
         </div>
       ) : (

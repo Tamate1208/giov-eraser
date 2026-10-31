@@ -184,6 +184,7 @@ export default function App() {
       const blob = new Blob([cleanBytes as BlobPart], { type: 'application/pdf' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
+      a.href = url
       const baseName = fileName ? fileName.replace(/\.pdf$/i, '') : 'document'
       a.download = `${baseName}_墨消し済.pdf`
       document.body.appendChild(a)
