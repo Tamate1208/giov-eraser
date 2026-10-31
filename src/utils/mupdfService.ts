@@ -1,4 +1,5 @@
 import { GZIPPED_MUPDF_WASM_BASE64 } from './wasmBinary';
+import { DrawingItem } from '../types/drawing';
 
 let mupdfModule: any = null;
 let initPromise: Promise<any> | null = null;
@@ -202,51 +203,175 @@ export async function extractTextRectsInBBox(
   return rects;
 }
 
+// 16進カラーコード (#ef4444等) を [r, g, b] (0〜1) に変換
+function hexToRgb(hex: string): [number, number, number] {
+  let c = hex.replace('#', '')
+  if (c.length === 3) {
+    c = c.split('').map((x) => x + x).join('')
+  }
+  const num = parseInt(c, 16) || 0
+  return [
+    ((num >> 16) & 255) / 255,
+    ((num >> 8) & 255) / 255,
+    (num & 255) / 255,
+  ]
+}
+
 /**
- * 完全不可逆墨消し（Redaction）の実行
+ * 完全不可逆墨消し（Redaction）および描画・校正オブジェクトの合成実行
  * 選択範囲内のテキストストリーム・画像・オブジェクトを物理削除し、
- * 非選択箇所のテキスト選択・OCR適性を100%保持したクリーンPDFを生成する
+ * その上に赤書・文字・囲み等のベクター注釈を高精度に合成したクリーンPDFを生成する
  */
 export async function applyRedactions(
   pdfBytes: Uint8Array,
   redactions: RedactRect[],
-  defaultColor: 'black' | 'white' = 'black'
+  defaultColor: 'black' | 'white' = 'black',
+  drawings: DrawingItem[] = []
 ): Promise<Uint8Array> {
   const m = await getMuPdf();
   const doc = m.Document.openDocument(pdfBytes, 'application/pdf');
   const numPages = doc.countPages();
 
-  // ページごとに矩形をグループ化
-  const pageMap = new Map<number, RedactRect[]>();
-  for (const r of redactions) {
-    const list = pageMap.get(r.pageIndex) || [];
-    list.push(r);
-    pageMap.set(r.pageIndex, list);
-  }
-
-  for (let i = 0; i < numPages; i++) {
-    const rectList = pageMap.get(i);
-    if (!rectList || rectList.length === 0) continue;
-
-    const page = doc.loadPage(i);
-
-    for (const r of rectList) {
-      const annot = page.createAnnotation('Redact');
-      // [x0, y0, x1, y1]
-      annot.setRect([r.x0, r.y0, r.x1, r.y1]);
-
-      // 色設定 (黒または白)
-      const color = r.color || defaultColor;
-      if (color === 'white') {
-        annot.setColor([1, 1, 1]); // 白
-      } else {
-        annot.setColor([0, 0, 0]); // 黒
-      }
+  // 1. 墨消し物理切除の実行
+  if (redactions.length > 0) {
+    const pageMap = new Map<number, RedactRect[]>();
+    for (const r of redactions) {
+      const list = pageMap.get(r.pageIndex) || [];
+      list.push(r);
+      pageMap.set(r.pageIndex, list);
     }
 
-    // 物理墨消しをコミット (テキスト・画像ストリーム物理切除)
-    // 引数: blackBoxes = true (矩形を描画)
-    page.applyRedactions(true);
+    for (let i = 0; i < numPages; i++) {
+      const rectList = pageMap.get(i);
+      if (!rectList || rectList.length === 0) continue;
+
+      const page = doc.loadPage(i);
+
+      for (const r of rectList) {
+        const annot = page.createAnnotation('Redact');
+        annot.setRect([r.x0, r.y0, r.x1, r.y1]);
+
+        const color = r.color || defaultColor;
+        if (color === 'white') {
+          annot.setColor([1, 1, 1]); // 白
+        } else {
+          annot.setColor([0, 0, 0]); // 黒
+        }
+      }
+
+      // 物理墨消しをコミット (テキスト・画像ストリーム物理切除)
+      page.applyRedactions(true);
+    }
+  }
+
+  // 2. 描画・校正アイテムの合成適用
+  if (drawings && drawings.length > 0) {
+    const drawPageMap = new Map<number, DrawingItem[]>();
+    for (const d of drawings) {
+      const list = drawPageMap.get(d.pageIndex) || [];
+      list.push(d);
+      drawPageMap.set(d.pageIndex, list);
+    }
+
+    for (let i = 0; i < numPages; i++) {
+      const drawList = drawPageMap.get(i);
+      if (!drawList || drawList.length === 0) continue;
+
+      const page = doc.loadPage(i);
+
+      for (const d of drawList) {
+        const rgb = hexToRgb(d.color);
+
+        if (d.tool === 'arrow' || d.tool === 'line') {
+          if (!d.points || d.points.length < 2) continue;
+          const annot = page.createAnnotation('Line');
+          annot.setLine([d.points[0].x, d.points[0].y], [d.points[1].x, d.points[1].y]);
+          annot.setColor(rgb);
+          annot.setBorderWidth(d.lineWidth || 2);
+          if (d.tool === 'arrow') {
+            annot.setLineEndingStyles('None', 'OpenArrow');
+          }
+          annot.update();
+        } else if (d.tool === 'rect') {
+          if (d.x === undefined || d.y === undefined || d.w === undefined || d.h === undefined) continue;
+          const annot = page.createAnnotation('Square');
+          annot.setRect([d.x, d.y, d.x + d.w, d.y + d.h]);
+          annot.setColor(rgb);
+          annot.setBorderWidth(d.lineWidth || 2);
+          if (d.fillMode === 'solid') {
+            annot.setInteriorColor(rgb);
+          } else if (d.fillMode === 'semi') {
+            annot.setInteriorColor(rgb);
+            annot.setOpacity(0.25);
+          }
+          annot.update();
+        } else if (d.tool === 'circle') {
+          if (d.x === undefined || d.y === undefined || d.w === undefined || d.h === undefined) continue;
+          const annot = page.createAnnotation('Circle');
+          annot.setRect([d.x, d.y, d.x + d.w, d.y + d.h]);
+          annot.setColor(rgb);
+          annot.setBorderWidth(d.lineWidth || 2);
+          if (d.fillMode === 'solid') {
+            annot.setInteriorColor(rgb);
+          } else if (d.fillMode === 'semi') {
+            annot.setInteriorColor(rgb);
+            annot.setOpacity(0.25);
+          }
+          annot.update();
+        } else if (d.tool === 'polygon') {
+          if (!d.points || d.points.length < 3) continue;
+          const annot = page.createAnnotation('Polygon');
+          for (const pt of d.points) {
+            annot.addVertex([pt.x, pt.y]);
+          }
+          annot.setColor(rgb);
+          annot.setBorderWidth(d.lineWidth || 2);
+          if (d.fillMode === 'solid') {
+            annot.setInteriorColor(rgb);
+          } else if (d.fillMode === 'semi') {
+            annot.setInteriorColor(rgb);
+            annot.setOpacity(0.25);
+          }
+          annot.update();
+        } else if (d.tool === 'text') {
+          if (d.x === undefined || d.y === undefined || !d.text) continue;
+          const fontPx = d.fontSize || 16;
+          const estW = d.text.length * fontPx * 1.2 + 20;
+          const estH = fontPx + 10;
+
+          if (d.bgWhite) {
+            const bgAnnot = page.createAnnotation('Square');
+            bgAnnot.setRect([d.x - 2, d.y - fontPx + 2, d.x + estW, d.y + 4]);
+            bgAnnot.setColor([1, 1, 1]);
+            bgAnnot.setInteriorColor([1, 1, 1]);
+            bgAnnot.setBorderWidth(0);
+            bgAnnot.update();
+          }
+
+          const annot = page.createAnnotation('FreeText');
+          annot.setRect([d.x, d.y - fontPx, d.x + estW, d.y + 10]);
+          annot.setContents(d.text);
+          annot.setColor(rgb);
+          annot.setDefaultAppearance('Helvetica', fontPx, rgb);
+          annot.update();
+        } else if (d.tool === 'check') {
+          if (d.x === undefined || d.y === undefined) continue;
+          const ox = d.x;
+          const oy = d.y;
+          const line1 = page.createAnnotation('Line');
+          line1.setLine([ox + 2, oy + 8], [ox + 6, oy + 13]);
+          line1.setColor(rgb);
+          line1.setBorderWidth(d.lineWidth || 2.5);
+          line1.update();
+
+          const line2 = page.createAnnotation('Line');
+          line2.setLine([ox + 6, oy + 13], [ox + 14, oy + 3]);
+          line2.setColor(rgb);
+          line2.setBorderWidth(d.lineWidth || 2.5);
+          line2.update();
+        }
+      }
+    }
   }
 
   // クリーンなPDFとして保存 (不要オブジェクト・切り取られたストリームの完全ガベージコレクション)

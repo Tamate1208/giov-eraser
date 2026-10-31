@@ -13,6 +13,13 @@ import {
   PdfDocumentInfo,
 } from './utils/mupdfService'
 import {
+  AppMode,
+  DrawingTool,
+  FillMode,
+  DrawingItem,
+  HistoryAction,
+} from './types/drawing'
+import {
   FileUp,
   ShieldCheck,
   FileCheck,
@@ -32,6 +39,18 @@ export default function App() {
   const [colorMode, setColorMode] = useState<'black' | 'white'>('black')
   const [selectMode, setSelectMode] = useState<'text' | 'rect'>('text')
   const [redactions, setRedactions] = useState<RedactRect[]>([])
+
+  // 描画・校正モード用 state
+  const [appMode, setAppMode] = useState<AppMode>('eraser')
+  const [activeTool, setActiveTool] = useState<DrawingTool>('text')
+  const [drawColor, setDrawColor] = useState<string>('#ef4444') // 初期色は赤
+  const [lineWidth, setLineWidth] = useState<number>(2)
+  const [fontSize, setFontSize] = useState<number>(16)
+  const [fillMode, setFillMode] = useState<FillMode>('none')
+  const [drawings, setDrawings] = useState<DrawingItem[]>([])
+
+  // 操作履歴 (Undo 用)
+  const [history, setHistory] = useState<HistoryAction[]>([])
 
   // ページごとのレンダリング画像キャッシュ
   const [pageImages, setPageImages] = useState<Map<number, string>>(new Map())
@@ -59,6 +78,8 @@ export default function App() {
       setDocInfo(info)
       setCurrentPage(0)
       setRedactions([])
+      setDrawings([])
+      setHistory([])
       setLastAddedRect(null)
       setPageImages(new Map())
       setThumbnails(new Map())
@@ -133,6 +154,10 @@ export default function App() {
             color: rectData.color,
           }))
           setRedactions((prev) => [...prev, ...newRects])
+          setHistory((prev) => [
+            ...prev,
+            { type: 'add_redactions', redactionIds: newRects.map((r) => r.id) },
+          ])
           showToast(`✨ 囲み内のテキスト（${newRects.length}行）に吸着選択しました！`)
           return
         }
@@ -148,6 +173,10 @@ export default function App() {
       id: `redact_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     }
     setRedactions((prev) => [...prev, newRect])
+    setHistory((prev) => [
+      ...prev,
+      { type: 'add_redaction', redactionId: newRect.id },
+    ])
   }
 
   // 直前に囲んだ領域を全ページに一括展開
@@ -196,6 +225,10 @@ export default function App() {
       }
 
       setRedactions((prev) => [...prev, ...newRects])
+      setHistory((prev) => [
+        ...prev,
+        { type: 'add_redactions', redactionIds: newRects.map((r) => r.id) },
+      ])
       showToast(`✨ 直前に囲んだ領域を、全 ${docInfo.numPages} ページに一括展開しました！（計${newRects.length}箇所追加）`)
     } catch (err) {
       console.error('全ページ展開エラー:', err)
@@ -207,6 +240,10 @@ export default function App() {
 
   // 消しゴム矩形の削除
   const handleRemoveRedaction = (id: string) => {
+    const target = redactions.find((r) => r.id === id)
+    if (target) {
+      setHistory((prev) => [...prev, { type: 'remove_redaction', redaction: target }])
+    }
     setRedactions((prev) => prev.filter((r) => r.id !== id))
     if (lastAddedRect && lastAddedRect.id === id) {
       setLastAddedRect(null)
@@ -215,6 +252,13 @@ export default function App() {
 
   // 現在ページの消しゴム枠をクリア
   const handleClearPageRedactions = () => {
+    const pageReds = redactions.filter((r) => r.pageIndex === currentPage)
+    if (pageReds.length > 0) {
+      setHistory((prev) => [
+        ...prev,
+        { type: 'clear_page', redactions: pageReds, drawings: [] },
+      ])
+    }
     setRedactions((prev) => prev.filter((r) => r.pageIndex !== currentPage))
     if (lastAddedRect && lastAddedRect.pageIndex === currentPage) {
       setLastAddedRect(null)
@@ -225,11 +269,82 @@ export default function App() {
   const handleClearAllRedactions = () => {
     if (redactions.length === 0) return
     if (window.confirm(`全ページの消しゴム枠（合計 ${redactions.length} 箇所）をすべて解除しますか？`)) {
+      setHistory((prev) => [
+        ...prev,
+        { type: 'clear_all', redactions: [...redactions], drawings: [] },
+      ])
       setRedactions([])
       setLastAddedRect(null)
       showToast('🗑️ 全ページの消しゴム枠をすべて解除しました。')
     }
   }
+
+  // 描画アイテムの追加
+  const handleAddDrawing = (item: Omit<DrawingItem, 'id'>) => {
+    const newItem: DrawingItem = {
+      ...item,
+      id: `draw_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    }
+    setDrawings((prev) => [...prev, newItem])
+    setHistory((prev) => [...prev, { type: 'add_drawing', drawingId: newItem.id }])
+  }
+
+  // 描画アイテムの削除
+  const handleRemoveDrawing = (id: string) => {
+    const target = drawings.find((d) => d.id === id)
+    if (target) {
+      setHistory((prev) => [...prev, { type: 'remove_drawing', drawing: target }])
+    }
+    setDrawings((prev) => prev.filter((d) => d.id !== id))
+  }
+
+  // 元に戻す (Undo)
+  const handleUndo = () => {
+    setHistory((prev) => {
+      if (prev.length === 0) return prev
+      const newHist = [...prev]
+      const action = newHist.pop()!
+
+      switch (action.type) {
+        case 'add_redaction':
+          setRedactions((r) => r.filter((item) => item.id !== action.redactionId))
+          break
+        case 'add_redactions':
+          setRedactions((r) => r.filter((item) => !action.redactionIds.includes(item.id)))
+          break
+        case 'remove_redaction':
+          setRedactions((r) => [...r, action.redaction])
+          break
+        case 'add_drawing':
+          setDrawings((d) => d.filter((item) => item.id !== action.drawingId))
+          break
+        case 'remove_drawing':
+          setDrawings((d) => [...d, action.drawing])
+          break
+        case 'clear_page':
+        case 'clear_all':
+          setRedactions((r) => [...r, ...action.redactions])
+          setDrawings((d) => [...d, ...action.drawings])
+          break
+      }
+      showToast('↩️ 直前の操作を元に戻しました。')
+      return newHist
+    })
+  }
+
+  // キーボードショートカット (Ctrl+Z / Cmd+Z で Undo)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        if (!e.shiftKey) {
+          e.preventDefault()
+          handleUndo()
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   // キーワード一括検索消しゴム
   const handleKeywordSearch = async (keyword: string, searchAllPages: boolean) => {
@@ -276,20 +391,20 @@ export default function App() {
     }
   }
 
-  // 墨消し実行＆クリーンPDFダウンロード
+  // 墨消し＆描画実行＆クリーンPDFダウンロード
   const handleSave = async () => {
     if (!pdfBytes) return
 
-    if (redactions.length === 0) {
-      showToast('⚠️ 消去したい箇所をドラッグ選択するか、上部の検索窓からキーワードを指定してください。')
+    if (redactions.length === 0 && drawings.length === 0) {
+      showToast('⚠️ 消去したい箇所をドラッグ選択するか、描画・校正ツールで追記を行ってください。')
       return
     }
 
     setIsProcessing(true)
 
     try {
-      // 物理墨消しエンジン実行
-      const cleanBytes = await applyRedactions(pdfBytes, redactions, colorMode)
+      // 物理墨消し ＆ 描画アノテーション合成エンジン実行
+      const cleanBytes = await applyRedactions(pdfBytes, redactions, colorMode, drawings)
 
       // ダウンロードトリガー (安全にBlob化)
       const blob = new Blob([cleanBytes as BlobPart], { type: 'application/pdf' })
@@ -297,16 +412,25 @@ export default function App() {
       const a = document.createElement('a')
       a.href = url
       const baseName = fileName ? fileName.replace(/\.pdf$/i, '') : 'document'
-      a.download = `${baseName}_墨消し済.pdf`
+      const suffix =
+        redactions.length > 0 && drawings.length > 0
+          ? '墨消し・校正済'
+          : redactions.length > 0
+          ? '墨消し済'
+          : '校正済'
+      a.download = `${baseName}_${suffix}.pdf`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
 
-      showToast(`🎉 【${redactions.length}箇所】の完全不可逆墨消しが完了しました！消去箇所以外のテキスト選択・OCR適性は100%保持されています。`)
+      const summaryParts: string[] = []
+      if (redactions.length > 0) summaryParts.push(`墨消し${redactions.length}箇所`)
+      if (drawings.length > 0) summaryParts.push(`描画・校正${drawings.length}件`)
+      showToast(`🎉 【${summaryParts.join(' ＋ ')}】の反映が完了しました！消去箇所以外のテキスト選択・OCR適性は100%保持されています。`)
     } catch (err) {
-      console.error('墨消し保存エラー:', err)
-      alert('墨消し処理中にエラーが発生しました。')
+      console.error('保存処理エラー:', err)
+      alert('PDFの保存処理中にエラーが発生しました。')
     } finally {
       setIsProcessing(false)
     }
@@ -326,6 +450,8 @@ export default function App() {
       setFileName(null)
       setDocInfo(null)
       setRedactions([])
+      setDrawings([])
+      setHistory([])
       setLastAddedRect(null)
       setPageImages(new Map())
       setThumbnails(new Map())
@@ -333,6 +459,7 @@ export default function App() {
   }
 
   const currentPageRedactions = redactions.filter((r) => r.pageIndex === currentPage)
+  const currentPageDrawings = drawings.filter((d) => d.pageIndex === currentPage)
 
   return (
     <div
@@ -357,6 +484,7 @@ export default function App() {
       <Header
         fileName={fileName}
         totalRedactions={redactions.length}
+        totalDrawings={drawings.length}
         isProcessing={isProcessing}
         onUploadClick={() => fileInputRef.current?.click()}
         onSaveClick={handleSave}
@@ -383,6 +511,15 @@ export default function App() {
             pageRedactionCount={currentPageRedactions.length}
             totalRedactionCount={redactions.length}
             hasLastSelectedArea={lastAddedRect !== null}
+            appMode={appMode}
+            activeTool={activeTool}
+            drawColor={drawColor}
+            lineWidth={lineWidth}
+            fontSize={fontSize}
+            fillMode={fillMode}
+            pageDrawingCount={currentPageDrawings.length}
+            totalDrawingCount={drawings.length}
+            canUndo={history.length > 0}
             onPageChange={setCurrentPage}
             onZoomChange={setZoom}
             onColorModeChange={setColorMode}
@@ -391,6 +528,13 @@ export default function App() {
             onClearAllRedactions={handleClearAllRedactions}
             onKeywordSearch={handleKeywordSearch}
             onApplyAreaToAllPages={handleApplyAreaToAllPages}
+            onAppModeChange={setAppMode}
+            onToolChange={setActiveTool}
+            onDrawColorChange={setDrawColor}
+            onLineWidthChange={setLineWidth}
+            onFontSizeChange={setFontSize}
+            onFillModeChange={setFillMode}
+            onUndo={handleUndo}
           />
 
           {/* メインワークスペース: サムネイル + メインビューア */}
@@ -411,8 +555,17 @@ export default function App() {
               redactions={currentPageRedactions}
               colorMode={colorMode}
               zoom={zoom}
+              appMode={appMode}
+              activeTool={activeTool}
+              drawColor={drawColor}
+              lineWidth={lineWidth}
+              fontSize={fontSize}
+              fillMode={fillMode}
+              drawings={currentPageDrawings}
               onAddRedaction={handleAddRedaction}
               onRemoveRedaction={handleRemoveRedaction}
+              onAddDrawing={handleAddDrawing}
+              onRemoveDrawing={handleRemoveDrawing}
             />
           </div>
         </>

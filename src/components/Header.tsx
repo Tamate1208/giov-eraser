@@ -4,6 +4,7 @@ import { Eraser, Download, FileUp, ShieldCheck, RefreshCw } from 'lucide-react'
 interface HeaderProps {
   fileName: string | null;
   totalRedactions: number;
+  totalDrawings?: number;
   isProcessing: boolean;
   onUploadClick: () => void;
   onSaveClick: () => void;
@@ -13,11 +14,20 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   fileName,
   totalRedactions,
+  totalDrawings = 0,
   isProcessing,
   onUploadClick,
   onSaveClick,
   onResetClick,
 }) => {
+  const totalCount = totalRedactions + totalDrawings
+  const saveBtnLabel = isProcessing
+    ? '処理中...'
+    : totalRedactions > 0 && totalDrawings > 0
+    ? '墨消し＆校正PDFを保存'
+    : totalDrawings > 0
+    ? '校正済PDFを保存'
+    : '墨消しPDFを保存'
   return (
     <header className="border-b border-slate-800 bg-slate-900/90 backdrop-blur-md px-6 py-3.5 flex items-center justify-between sticky top-0 z-30 shadow-md">
       {/* ロゴとアプリ名 */}
@@ -55,9 +65,15 @@ export const Header: React.FC<HeaderProps> = ({
         {fileName && (
           <>
             <div className="text-right mr-2 hidden sm:block">
-              <span className="text-xs text-slate-400">設定中の消しゴム</span>
+              <span className="text-xs text-slate-400">
+                {totalRedactions > 0 && totalDrawings > 0
+                  ? '消しゴム ＋ 描画'
+                  : totalDrawings > 0
+                  ? '設定中の描画'
+                  : '設定中の消しゴム'}
+              </span>
               <div className="text-sm font-bold text-rose-400">
-                {totalRedactions} <span className="text-xs font-normal text-slate-400">箇所</span>
+                {totalCount} <span className="text-xs font-normal text-slate-400">箇所</span>
               </div>
             </div>
 
@@ -87,14 +103,14 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={onSaveClick}
             disabled={isProcessing}
             className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 shadow-lg active:scale-95 ${
-              totalRedactions > 0
+              totalCount > 0
                 ? 'bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white shadow-rose-600/30 ring-1 ring-rose-400/50 cursor-pointer'
                 : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer'
             }`}
-            title={totalRedactions === 0 ? '消しゴム枠を設定してから保存してください' : '不可逆墨消しを実行して保存'}
+            title={totalCount === 0 ? '消しゴム枠または描画アイテムを設定してから保存してください' : 'PDFを保存'}
           >
             <Download className={`w-4 h-4 ${isProcessing ? 'animate-bounce' : ''}`} />
-            <span>{isProcessing ? '墨消し処理中...' : '墨消しPDFを保存'}</span>
+            <span>{saveBtnLabel}</span>
           </button>
         )}
       </div>
