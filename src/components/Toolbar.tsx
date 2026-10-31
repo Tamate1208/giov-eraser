@@ -20,7 +20,7 @@ import {
   Eraser,
   PenTool,
 } from 'lucide-react'
-import { AppMode, DrawingTool, FillMode } from '../types/drawing'
+import { AppMode, DrawingTool, FillMode, ArrowHead } from '../types/drawing'
 
 interface ToolbarProps {
   currentPage: number;
@@ -39,6 +39,8 @@ interface ToolbarProps {
   lineWidth: number;
   fontSize: number;
   fillMode: FillMode;
+  arrowHead: ArrowHead;
+  checkSize: number;
   pageDrawingCount: number;
   totalDrawingCount: number;
   canUndo: boolean;
@@ -57,14 +59,17 @@ interface ToolbarProps {
   onLineWidthChange: (w: number) => void;
   onFontSizeChange: (size: number) => void;
   onFillModeChange: (mode: FillMode) => void;
+  onArrowHeadChange: (head: ArrowHead) => void;
+  onCheckSizeChange: (size: number) => void;
   onUndo: () => void;
 }
 
 const COLOR_PALETTE = [
   { label: '赤', value: '#ef4444', ring: 'ring-red-400' },
-  { label: '黒', value: '#0f172a', ring: 'ring-slate-400' },
+  { label: '黄（蛍光）', value: '#facc15', ring: 'ring-yellow-400' },
   { label: '青', value: '#2563eb', ring: 'ring-blue-400' },
   { label: '緑', value: '#16a34a', ring: 'ring-green-400' },
+  { label: '黒', value: '#0f172a', ring: 'ring-slate-400' },
   { label: '白', value: '#ffffff', ring: 'ring-slate-200' },
   { label: '橙', value: '#f97316', ring: 'ring-orange-400' },
 ]
@@ -84,6 +89,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   lineWidth,
   fontSize,
   fillMode,
+  arrowHead,
+  checkSize,
   pageDrawingCount,
   totalDrawingCount,
   canUndo,
@@ -101,6 +108,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onLineWidthChange,
   onFontSizeChange,
   onFillModeChange,
+  onArrowHeadChange,
+  onCheckSizeChange,
   onUndo,
 }) => {
   const [keyword, setKeyword] = useState('')
@@ -555,6 +564,59 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             </div>
           )}
 
+          {/* 矢印の端点設定（矢印・直線ツールの場合） */}
+          {(activeTool === 'arrow' || activeTool === 'line') && (
+            <div className="flex items-center gap-2 border-l border-slate-800 pl-3">
+              <span className="text-slate-400 font-medium">矢印:</span>
+              <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+                <button
+                  onClick={() => onArrowHeadChange('end')}
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
+                    arrowHead === 'end'
+                      ? 'bg-blue-600 text-white font-bold'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="終点に矢印（引き出し線）"
+                >
+                  終点 ➔
+                </button>
+                <button
+                  onClick={() => onArrowHeadChange('start')}
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
+                    arrowHead === 'start'
+                      ? 'bg-blue-600 text-white font-bold'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="始点に矢印"
+                >
+                  始点 ⬅
+                </button>
+                <button
+                  onClick={() => onArrowHeadChange('both')}
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
+                    arrowHead === 'both'
+                      ? 'bg-blue-600 text-white font-bold'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="両端に矢印（寸法・範囲指示）"
+                >
+                  両端 ⬌
+                </button>
+                <button
+                  onClick={() => onArrowHeadChange('none')}
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
+                    arrowHead === 'none'
+                      ? 'bg-blue-600 text-white font-bold'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="矢印なし（直線）"
+                >
+                  なし ─
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* 文字サイズ（テキストの場合） */}
           {activeTool === 'text' && (
             <div className="flex items-center gap-2 border-l border-slate-800 pl-3">
@@ -571,6 +633,32 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                     onClick={() => onFontSizeChange(s.size)}
                     className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
                       fontSize === s.size
+                        ? 'bg-blue-600 text-white font-bold'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* チェックマークのサイズ設定 */}
+          {activeTool === 'check' && (
+            <div className="flex items-center gap-2 border-l border-slate-800 pl-3">
+              <span className="text-slate-400 font-medium">サイズ:</span>
+              <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+                {[
+                  { label: '小 (14)', size: 14 },
+                  { label: '中 (22)', size: 22 },
+                  { label: '大 (30)', size: 30 },
+                ].map((s) => (
+                  <button
+                    key={s.size}
+                    onClick={() => onCheckSizeChange(s.size)}
+                    className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
+                      checkSize === s.size
                         ? 'bg-blue-600 text-white font-bold'
                         : 'text-slate-400 hover:text-white'
                     }`}

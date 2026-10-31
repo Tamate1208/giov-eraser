@@ -16,6 +16,7 @@ import {
   AppMode,
   DrawingTool,
   FillMode,
+  ArrowHead,
   DrawingItem,
   HistoryAction,
 } from './types/drawing'
@@ -47,6 +48,8 @@ export default function App() {
   const [lineWidth, setLineWidth] = useState<number>(2)
   const [fontSize, setFontSize] = useState<number>(16)
   const [fillMode, setFillMode] = useState<FillMode>('none')
+  const [arrowHead, setArrowHead] = useState<ArrowHead>('end')
+  const [checkSize, setCheckSize] = useState<number>(22)
   const [drawings, setDrawings] = useState<DrawingItem[]>([])
 
   // 操作履歴 (Undo 用)
@@ -517,6 +520,8 @@ export default function App() {
             lineWidth={lineWidth}
             fontSize={fontSize}
             fillMode={fillMode}
+            arrowHead={arrowHead}
+            checkSize={checkSize}
             pageDrawingCount={currentPageDrawings.length}
             totalDrawingCount={drawings.length}
             canUndo={history.length > 0}
@@ -534,6 +539,8 @@ export default function App() {
             onLineWidthChange={setLineWidth}
             onFontSizeChange={setFontSize}
             onFillModeChange={setFillMode}
+            onArrowHeadChange={setArrowHead}
+            onCheckSizeChange={setCheckSize}
             onUndo={handleUndo}
           />
 
@@ -561,6 +568,8 @@ export default function App() {
               lineWidth={lineWidth}
               fontSize={fontSize}
               fillMode={fillMode}
+              arrowHead={arrowHead}
+              checkSize={checkSize}
               drawings={currentPageDrawings}
               onAddRedaction={handleAddRedaction}
               onRemoveRedaction={handleRemoveRedaction}

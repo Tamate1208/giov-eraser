@@ -1,13 +1,54 @@
-import React, { useRef, useState } from 'react'
+import React, { useRef, useState, useEffect } from 'react'
 import { RedactRect, PdfPageInfo } from '../utils/mupdfService'
 import {
   AppMode,
   DrawingTool,
   FillMode,
+  ArrowHead,
   DrawingItem,
   Point,
 } from '../types/drawing'
-import { X, Eraser, Check, CornerDownLeft } from 'lucide-react'
+import { X, Eraser, Check, CornerDownLeft, Trash2 } from 'lucide-react'
+
+// 数学的に確実な矢じりベクターパスを計算（始点・終点・両端対応）
+function getArrowHeadPath(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  lineWidth: number,
+  mode: ArrowHead = 'end'
+): string {
+  if (mode === 'none') return ''
+  const dx = x2 - x1
+  const dy = y2 - y1
+  const len = Math.hypot(dx, dy)
+  if (len < 5) return ''
+
+  const angle = Math.atan2(dy, dx)
+  const headLen = Math.min(len * 0.4, 12 + lineWidth * 2)
+  let d = ''
+
+  // 終点側の矢じり
+  if (mode === 'end' || mode === 'both') {
+    const ax1 = x2 - headLen * Math.cos(angle - Math.PI / 6)
+    const ay1 = y2 - headLen * Math.sin(angle - Math.PI / 6)
+    const ax2 = x2 - headLen * Math.cos(angle + Math.PI / 6)
+    const ay2 = y2 - headLen * Math.sin(angle + Math.PI / 6)
+    d += `M ${ax1} ${ay1} L ${x2} ${y2} L ${ax2} ${ay2} `
+  }
+
+  // 始点側の矢じり
+  if (mode === 'start' || mode === 'both') {
+    const bx1 = x1 + headLen * Math.cos(angle - Math.PI / 6)
+    const by1 = y1 + headLen * Math.sin(angle - Math.PI / 6)
+    const bx2 = x1 + headLen * Math.cos(angle + Math.PI / 6)
+    const by2 = y1 + headLen * Math.sin(angle + Math.PI / 6)
+    d += `M ${bx1} ${by1} L ${x1} ${y1} L ${bx2} ${by2} `
+  }
+
+  return d
+}
 
 interface PdfViewerProps {
   pageImage: string | null;
@@ -22,6 +63,8 @@ interface PdfViewerProps {
   lineWidth: number;
   fontSize: number;
   fillMode: FillMode;
+  arrowHead: ArrowHead;
+  checkSize: number;
   drawings: DrawingItem[];
   // ハンドラ
   onAddRedaction: (rect: Omit<RedactRect, 'id'>) => void;
@@ -42,6 +85,8 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   lineWidth,
   fontSize,
   fillMode,
+  arrowHead,
+  checkSize,
   drawings,
   onAddRedaction,
   onRemoveRedaction,
@@ -78,6 +123,24 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
 
   // 選択中のアイテムID（ホバーまたはクリックで削除できるように）
   const [hoveredDrawingId, setHoveredDrawingId] = useState<string | null>(null)
+  const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null)
+
+  // 選択中アイテムの Delete / BackSpace キー削除
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedDrawingId) {
+        // テキスト入力中は除外
+        if (textInput) return
+        e.preventDefault()
+        onRemoveDrawing(selectedDrawingId)
+        setSelectedDrawingId(null)
+      } else if (e.key === 'Escape') {
+        setSelectedDrawingId(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedDrawingId, textInput, onRemoveDrawing])
 
   // テキスト入力の確定
   const handleConfirmText = () => {
@@ -126,6 +189,9 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!pageInfo || !overlayRef.current) return
 
+    // 選択を解除
+    setSelectedDrawingId(null)
+
     // テキスト入力中なら確定/閉じる
     if (textInput) {
       handleConfirmText()
@@ -157,17 +223,18 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
 
     // 描画モード: チェックマーク（ワンタップ配置）
     if (appMode === 'draw' && activeTool === 'check') {
+      const half = (checkSize * 1.5) / 2
       onAddDrawing({
         pageIndex: pageInfo.index,
         tool: 'check',
         color: drawColor,
         fillMode: 'none',
-        lineWidth: 2.5,
-        fontSize: 20,
-        x: (relX - 10) / 1.5,
-        y: (relY - 10) / 1.5,
-        w: 20 / 1.5,
-        h: 20 / 1.5,
+        lineWidth: Math.max(2, checkSize * 0.12),
+        fontSize: checkSize,
+        x: (relX - half) / 1.5,
+        y: (relY - half) / 1.5,
+        w: checkSize,
+        h: checkSize,
       })
       return
     }
@@ -272,6 +339,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
           lineWidth,
           fontSize,
           fillMode: 'none',
+          arrowHead: activeTool === 'arrow' ? arrowHead : 'none',
           points: [
             { x: start.x / 1.5, y: start.y / 1.5 },
             { x: current.x / 1.5, y: current.y / 1.5 },
@@ -355,28 +423,14 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
 
           {/* SVG 描画オーバーレイ層（描画・校正アイテムの表示） */}
           <svg
-            className="absolute inset-0 pointer-events-none z-15 overflow-visible"
+            className="absolute inset-0 pointer-events-none z-20 overflow-visible"
             width={pageInfo.width * 1.5}
             height={pageInfo.height * 1.5}
           >
-            <defs>
-              {/* 各色に対応した矢印マーカー */}
-              <marker
-                id="arrow-marker"
-                viewBox="0 0 10 10"
-                refX="7"
-                refY="5"
-                markerWidth="6"
-                markerHeight="6"
-                orient="auto-start-reverse"
-              >
-                <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="currentColor" />
-              </marker>
-            </defs>
-
             {/* 確定済み描画アイテム一覧 */}
             {drawings.map((item) => {
               const isHovered = hoveredDrawingId === item.id
+              const isSelected = selectedDrawingId === item.id
 
               if (item.tool === 'arrow' || item.tool === 'line') {
                 if (!item.points || item.points.length < 2) return null
@@ -387,37 +441,75 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 const x2 = p1.x * 1.5
                 const y2 = p1.y * 1.5
 
+                const mode = item.arrowHead || (item.tool === 'arrow' ? 'end' : 'none')
+                const arrowPath = getArrowHeadPath(x1, y1, x2, y2, item.lineWidth, mode)
+                const midX = (x1 + x2) / 2
+                const midY = (y1 + y2) / 2
+
                 return (
                   <g
                     key={item.id}
                     className="pointer-events-auto cursor-pointer group"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSelectedDrawingId(item.id)
+                    }}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
-                    style={{ color: item.color }}
                   >
+                    {/* 選択時の外枠ハイライト */}
+                    {isSelected && (
+                      <line
+                        x1={x1}
+                        y1={y1}
+                        x2={x2}
+                        y2={y2}
+                        stroke="#38bdf8"
+                        strokeWidth={item.lineWidth + 8}
+                        strokeOpacity="0.4"
+                        strokeLinecap="round"
+                      />
+                    )}
+
+                    {/* 直線本体 */}
                     <line
                       x1={x1}
                       y1={y1}
                       x2={x2}
                       y2={y2}
                       stroke={item.color}
-                      strokeWidth={item.lineWidth * (isHovered ? 1.5 : 1)}
+                      strokeWidth={item.lineWidth * (isHovered || isSelected ? 1.3 : 1)}
                       strokeLinecap="round"
-                      markerEnd={item.tool === 'arrow' ? 'url(#arrow-marker)' : undefined}
                     />
-                    {/* ホバー時の削除ボタン */}
-                    {isHovered && (
-                      <circle
-                        cx={(x1 + x2) / 2}
-                        cy={(y1 + y2) / 2}
-                        r="9"
-                        fill="#ef4444"
+
+                    {/* 矢じりベクター */}
+                    {arrowPath && (
+                      <path
+                        d={arrowPath}
+                        stroke={item.color}
+                        strokeWidth={item.lineWidth * (isHovered || isSelected ? 1.3 : 1)}
+                        fill="none"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    )}
+
+                    {/* 選択時・ホバー時の削除ボタン */}
+                    {(isHovered || isSelected) && (
+                      <g
+                        transform={`translate(${midX}, ${midY})`}
                         onClick={(e) => {
                           e.stopPropagation()
                           onRemoveDrawing(item.id)
+                          setSelectedDrawingId(null)
                         }}
                         className="cursor-pointer hover:scale-125 transition transform"
-                      />
+                      >
+                        <circle cx="0" cy="0" r="10" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
+                        <line x1="-4" y1="-4" x2="4" y2="4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
+                        <line x1="4" y1="-4" x2="-4" y2="4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
+                      </g>
                     )}
                   </g>
                 )
@@ -442,9 +534,27 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                   <g
                     key={item.id}
                     className="pointer-events-auto cursor-pointer group"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSelectedDrawingId(item.id)
+                    }}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
+                    {isSelected && (
+                      <rect
+                        x={rx - 4}
+                        y={ry - 4}
+                        width={rw + 8}
+                        height={rh + 8}
+                        fill="none"
+                        stroke="#38bdf8"
+                        strokeWidth="2"
+                        strokeDasharray="4 2"
+                        rx="4"
+                      />
+                    )}
                     <rect
                       x={rx}
                       y={ry}
@@ -455,18 +565,20 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       stroke={item.color}
                       strokeWidth={item.lineWidth}
                     />
-                    {isHovered && (
-                      <circle
-                        cx={rx + rw}
-                        cy={ry}
-                        r="8"
-                        fill="#ef4444"
+                    {(isHovered || isSelected) && (
+                      <g
+                        transform={`translate(${rx + rw}, ${ry})`}
                         onClick={(e) => {
                           e.stopPropagation()
                           onRemoveDrawing(item.id)
+                          setSelectedDrawingId(null)
                         }}
-                        className="cursor-pointer"
-                      />
+                        className="cursor-pointer hover:scale-125 transition transform"
+                      >
+                        <circle cx="0" cy="0" r="10" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
+                        <line x1="-4" y1="-4" x2="4" y2="4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
+                        <line x1="4" y1="-4" x2="-4" y2="4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
+                      </g>
                     )}
                   </g>
                 )
@@ -491,9 +603,26 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                   <g
                     key={item.id}
                     className="pointer-events-auto cursor-pointer group"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSelectedDrawingId(item.id)
+                    }}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
+                    {isSelected && (
+                      <ellipse
+                        cx={cx}
+                        cy={cy}
+                        rx={rx + 4}
+                        ry={ry + 4}
+                        fill="none"
+                        stroke="#38bdf8"
+                        strokeWidth="2"
+                        strokeDasharray="4 2"
+                      />
+                    )}
                     <ellipse
                       cx={cx}
                       cy={cy}
@@ -504,18 +633,20 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       stroke={item.color}
                       strokeWidth={item.lineWidth}
                     />
-                    {isHovered && (
-                      <circle
-                        cx={cx + rx}
-                        cy={cy}
-                        r="8"
-                        fill="#ef4444"
+                    {(isHovered || isSelected) && (
+                      <g
+                        transform={`translate(${cx + rx}, ${cy})`}
                         onClick={(e) => {
                           e.stopPropagation()
                           onRemoveDrawing(item.id)
+                          setSelectedDrawingId(null)
                         }}
-                        className="cursor-pointer"
-                      />
+                        className="cursor-pointer hover:scale-125 transition transform"
+                      >
+                        <circle cx="0" cy="0" r="10" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
+                        <line x1="-4" y1="-4" x2="4" y2="4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
+                        <line x1="4" y1="-4" x2="-4" y2="4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
+                      </g>
                     )}
                   </g>
                 )
@@ -536,9 +667,23 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                   <g
                     key={item.id}
                     className="pointer-events-auto cursor-pointer group"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSelectedDrawingId(item.id)
+                    }}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
+                    {isSelected && (
+                      <polygon
+                        points={pts}
+                        fill="none"
+                        stroke="#38bdf8"
+                        strokeWidth={item.lineWidth + 6}
+                        strokeOpacity="0.4"
+                      />
+                    )}
                     <polygon
                       points={pts}
                       fill={fillColor}
@@ -547,18 +692,20 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       strokeWidth={item.lineWidth}
                       strokeLinejoin="round"
                     />
-                    {isHovered && (
-                      <circle
-                        cx={item.points[0].x * 1.5}
-                        cy={item.points[0].y * 1.5}
-                        r="8"
-                        fill="#ef4444"
+                    {(isHovered || isSelected) && (
+                      <g
+                        transform={`translate(${item.points[0].x * 1.5}, ${item.points[0].y * 1.5})`}
                         onClick={(e) => {
                           e.stopPropagation()
                           onRemoveDrawing(item.id)
+                          setSelectedDrawingId(null)
                         }}
-                        className="cursor-pointer"
-                      />
+                        className="cursor-pointer hover:scale-125 transition transform"
+                      >
+                        <circle cx="0" cy="0" r="10" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
+                        <line x1="-4" y1="-4" x2="4" y2="4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
+                        <line x1="4" y1="-4" x2="-4" y2="4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
+                      </g>
                     )}
                   </g>
                 )
@@ -568,34 +715,55 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 if (item.x === undefined || item.y === undefined) return null
                 const ox = item.x * 1.5
                 const oy = item.y * 1.5
+                const s = (item.fontSize || 22) * 1.5
 
                 return (
                   <g
                     key={item.id}
                     className="pointer-events-auto cursor-pointer group"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSelectedDrawingId(item.id)
+                    }}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
+                    {isSelected && (
+                      <rect
+                        x={ox - 3}
+                        y={oy - 3}
+                        width={s + 6}
+                        height={s + 6}
+                        fill="none"
+                        stroke="#38bdf8"
+                        strokeWidth="2"
+                        strokeDasharray="3 2"
+                        rx="4"
+                      />
+                    )}
                     <path
-                      d={`M ${ox + 3} ${oy + 12} L ${ox + 9} ${oy + 19} L ${ox + 21} ${oy + 4}`}
+                      d={`M ${ox + s * 0.15} ${oy + s * 0.55} L ${ox + s * 0.42} ${oy + s * 0.85} L ${ox + s * 0.9} ${oy + s * 0.18}`}
                       fill="none"
                       stroke={item.color}
-                      strokeWidth={item.lineWidth || 3}
+                      strokeWidth={item.lineWidth || Math.max(2.5, s * 0.12)}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
-                    {isHovered && (
-                      <circle
-                        cx={ox + 20}
-                        cy={oy + 4}
-                        r="7"
-                        fill="#ef4444"
+                    {(isHovered || isSelected) && (
+                      <g
+                        transform={`translate(${ox + s}, ${oy})`}
                         onClick={(e) => {
                           e.stopPropagation()
                           onRemoveDrawing(item.id)
+                          setSelectedDrawingId(null)
                         }}
-                        className="cursor-pointer"
-                      />
+                        className="cursor-pointer hover:scale-125 transition transform"
+                      >
+                        <circle cx="0" cy="0" r="9" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
+                        <line x1="-3.5" y1="-3.5" x2="3.5" y2="3.5" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
+                        <line x1="3.5" y1="-3.5" x2="-3.5" y2="3.5" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
+                      </g>
                     )}
                   </g>
                 )
@@ -606,11 +774,17 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 const tx = item.x * 1.5
                 const ty = item.y * 1.5
                 const fontPx = item.fontSize * 1.5
+                const estW = item.text.length * fontPx * 0.95 + 8
 
                 return (
                   <g
                     key={item.id}
                     className="pointer-events-auto cursor-pointer group"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSelectedDrawingId(item.id)
+                    }}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
@@ -618,11 +792,24 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       <rect
                         x={tx - 4}
                         y={ty - fontPx + 2}
-                        width={item.text.length * fontPx * 0.95 + 8}
+                        width={estW}
                         height={fontPx + 6}
                         fill="#ffffff"
                         rx="2"
                         className="shadow-sm"
+                      />
+                    )}
+                    {isSelected && (
+                      <rect
+                        x={tx - 6}
+                        y={ty - fontPx}
+                        width={estW + 4}
+                        height={fontPx + 10}
+                        fill="none"
+                        stroke="#38bdf8"
+                        strokeWidth="2"
+                        strokeDasharray="3 2"
+                        rx="3"
                       />
                     )}
                     <text
@@ -635,18 +822,20 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     >
                       {item.text}
                     </text>
-                    {isHovered && (
-                      <circle
-                        cx={tx - 6}
-                        cy={ty - fontPx / 2}
-                        r="7"
-                        fill="#ef4444"
+                    {(isHovered || isSelected) && (
+                      <g
+                        transform={`translate(${tx - 8}, ${ty - fontPx / 2})`}
                         onClick={(e) => {
                           e.stopPropagation()
                           onRemoveDrawing(item.id)
+                          setSelectedDrawingId(null)
                         }}
-                        className="cursor-pointer"
-                      />
+                        className="cursor-pointer hover:scale-125 transition transform"
+                      >
+                        <circle cx="0" cy="0" r="9" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
+                        <line x1="-3.5" y1="-3.5" x2="3.5" y2="3.5" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
+                        <line x1="3.5" y1="-3.5" x2="-3.5" y2="3.5" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
+                      </g>
                     )}
                   </g>
                 )
@@ -693,26 +882,35 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
             {/* ドラッグ中のプレビュー描画（矢印、直線、矩形、丸） */}
             {dragPreview && appMode === 'draw' && (
               <g style={{ color: drawColor }}>
-                {activeTool === 'arrow' && (
-                  <line
-                    x1={dragPreview.startX}
-                    y1={dragPreview.startY}
-                    x2={dragPreview.currentX}
-                    y2={dragPreview.currentY}
-                    stroke={drawColor}
-                    strokeWidth={lineWidth}
-                    markerEnd="url(#arrow-marker)"
-                  />
-                )}
-                {activeTool === 'line' && (
-                  <line
-                    x1={dragPreview.startX}
-                    y1={dragPreview.startY}
-                    x2={dragPreview.currentX}
-                    y2={dragPreview.currentY}
-                    stroke={drawColor}
-                    strokeWidth={lineWidth}
-                  />
+                {(activeTool === 'arrow' || activeTool === 'line') && (
+                  <>
+                    <line
+                      x1={dragPreview.startX}
+                      y1={dragPreview.startY}
+                      x2={dragPreview.currentX}
+                      y2={dragPreview.currentY}
+                      stroke={drawColor}
+                      strokeWidth={lineWidth}
+                      strokeLinecap="round"
+                    />
+                    {activeTool === 'arrow' && (
+                      <path
+                        d={getArrowHeadPath(
+                          dragPreview.startX,
+                          dragPreview.startY,
+                          dragPreview.currentX,
+                          dragPreview.currentY,
+                          lineWidth,
+                          arrowHead
+                        )}
+                        stroke={drawColor}
+                        strokeWidth={lineWidth}
+                        fill="none"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    )}
+                  </>
                 )}
                 {activeTool === 'rect' && (
                   <rect

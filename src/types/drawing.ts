@@ -4,6 +4,8 @@ export type DrawingTool = 'text' | 'arrow' | 'line' | 'rect' | 'polygon' | 'chec
 
 export type FillMode = 'none' | 'semi' | 'solid'
 
+export type ArrowHead = 'end' | 'start' | 'both' | 'none'
+
 export interface Point {
   x: number
   y: number
@@ -18,6 +20,8 @@ export interface DrawingItem {
   fillMode: FillMode
   lineWidth: number
   fontSize: number
+  // 矢印用
+  arrowHead?: ArrowHead
   // テキスト用
   text?: string
   bgWhite?: boolean
@@ -39,3 +43,4 @@ export type HistoryAction =
   | { type: 'remove_drawing'; drawing: DrawingItem }
   | { type: 'clear_page'; redactions: any[]; drawings: DrawingItem[] }
   | { type: 'clear_all'; redactions: any[]; drawings: DrawingItem[] }
+

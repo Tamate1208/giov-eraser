@@ -284,14 +284,67 @@ export async function applyRedactions(
 
         if (d.tool === 'arrow' || d.tool === 'line') {
           if (!d.points || d.points.length < 2) continue;
+          const x1 = d.points[0].x;
+          const y1 = d.points[0].y;
+          const x2 = d.points[1].x;
+          const y2 = d.points[1].y;
+
+          // 線本体
           const annot = page.createAnnotation('Line');
-          annot.setLine([d.points[0].x, d.points[0].y], [d.points[1].x, d.points[1].y]);
+          annot.setLine([x1, y1], [x2, y2]);
           annot.setColor(rgb);
           annot.setBorderWidth(d.lineWidth || 2);
-          if (d.tool === 'arrow') {
-            annot.setLineEndingStyles('None', 'OpenArrow');
-          }
           annot.update();
+
+          // 矢じり（あらゆるPDFビューアで100%確実に表示されるよう物理線として描画）
+          const mode = d.arrowHead || (d.tool === 'arrow' ? 'end' : 'none');
+          if (mode !== 'none') {
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            const len = Math.hypot(dx, dy);
+            if (len >= 5) {
+              const angle = Math.atan2(dy, dx);
+              const headLen = Math.min(len * 0.4, 10 + (d.lineWidth || 2) * 2);
+
+              if (mode === 'end' || mode === 'both') {
+                const ax1 = x2 - headLen * Math.cos(angle - Math.PI / 6);
+                const ay1 = y2 - headLen * Math.sin(angle - Math.PI / 6);
+                const ax2 = x2 - headLen * Math.cos(angle + Math.PI / 6);
+                const ay2 = y2 - headLen * Math.sin(angle + Math.PI / 6);
+
+                const h1 = page.createAnnotation('Line');
+                h1.setLine([ax1, ay1], [x2, y2]);
+                h1.setColor(rgb);
+                h1.setBorderWidth(d.lineWidth || 2);
+                h1.update();
+
+                const h2 = page.createAnnotation('Line');
+                h2.setLine([ax2, ay2], [x2, y2]);
+                h2.setColor(rgb);
+                h2.setBorderWidth(d.lineWidth || 2);
+                h2.update();
+              }
+
+              if (mode === 'start' || mode === 'both') {
+                const bx1 = x1 + headLen * Math.cos(angle - Math.PI / 6);
+                const by1 = y1 + headLen * Math.sin(angle - Math.PI / 6);
+                const bx2 = x1 + headLen * Math.cos(angle + Math.PI / 6);
+                const by2 = y1 + headLen * Math.sin(angle + Math.PI / 6);
+
+                const h1 = page.createAnnotation('Line');
+                h1.setLine([bx1, by1], [x1, y1]);
+                h1.setColor(rgb);
+                h1.setBorderWidth(d.lineWidth || 2);
+                h1.update();
+
+                const h2 = page.createAnnotation('Line');
+                h2.setLine([bx2, by2], [x1, y1]);
+                h2.setColor(rgb);
+                h2.setBorderWidth(d.lineWidth || 2);
+                h2.update();
+              }
+            }
+          }
         } else if (d.tool === 'rect') {
           if (d.x === undefined || d.y === undefined || d.w === undefined || d.h === undefined) continue;
           const annot = page.createAnnotation('Square');
@@ -358,16 +411,24 @@ export async function applyRedactions(
           if (d.x === undefined || d.y === undefined) continue;
           const ox = d.x;
           const oy = d.y;
+          const s = d.fontSize || 22;
+          const p1x = ox + s * 0.15;
+          const p1y = oy + s * 0.55;
+          const p2x = ox + s * 0.42;
+          const p2y = oy + s * 0.85;
+          const p3x = ox + s * 0.9;
+          const p3y = oy + s * 0.18;
+
           const line1 = page.createAnnotation('Line');
-          line1.setLine([ox + 2, oy + 8], [ox + 6, oy + 13]);
+          line1.setLine([p1x, p1y], [p2x, p2y]);
           line1.setColor(rgb);
-          line1.setBorderWidth(d.lineWidth || 2.5);
+          line1.setBorderWidth(d.lineWidth || Math.max(2, s * 0.12));
           line1.update();
 
           const line2 = page.createAnnotation('Line');
-          line2.setLine([ox + 6, oy + 13], [ox + 14, oy + 3]);
+          line2.setLine([p2x, p2y], [p3x, p3y]);
           line2.setColor(rgb);
-          line2.setBorderWidth(d.lineWidth || 2.5);
+          line2.setBorderWidth(d.lineWidth || Math.max(2, s * 0.12));
           line2.update();
         }
       }
