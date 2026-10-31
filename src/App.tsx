@@ -39,6 +39,7 @@ export default function App() {
   const [isLoadingPdf, setIsLoadingPdf] = useState<boolean>(false)
   const [isProcessing, setIsProcessing] = useState<boolean>(false)
   const [successToast, setSuccessToast] = useState<string | null>(null)
+  const [lastAddedRect, setLastAddedRect] = useState<RedactRect | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -56,6 +57,7 @@ export default function App() {
       setDocInfo(info)
       setCurrentPage(0)
       setRedactions([])
+      setLastAddedRect(null)
       setPageImages(new Map())
       setThumbnails(new Map())
 
@@ -101,23 +103,60 @@ export default function App() {
     }
   }
 
-  // 消しゴム矩形の追加
+  // 消しゴム矩形の追加 (マウス領域ドラッグ時)
   const handleAddRedaction = (rectData: Omit<RedactRect, 'id'>) => {
     const newRect: RedactRect = {
       ...rectData,
       id: `redact_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     }
     setRedactions((prev) => [...prev, newRect])
+    setLastAddedRect(newRect)
+  }
+
+  // 直前に囲んだ領域を全ページに一括展開
+  const handleApplyAreaToAllPages = () => {
+    if (!lastAddedRect || !docInfo) return
+    if (docInfo.numPages <= 1) {
+      showToast('ℹ️ この文書は1ページのみのため、全ページ適用の必要はありません。')
+      return
+    }
+
+    // 他の全ページに同じ座標で展開
+    const otherPages = docInfo.pages.filter((p) => p.index !== lastAddedRect.pageIndex)
+    const newRects: RedactRect[] = otherPages.map((p) => ({
+      ...lastAddedRect,
+      id: `copy_${Date.now()}_p${p.index}_${Math.random().toString(36).substr(2, 7)}`,
+      pageIndex: p.index,
+    }))
+
+    setRedactions((prev) => [...prev, ...newRects])
+    showToast(`✨ 直前に囲んだ領域を、全 ${docInfo.numPages} ページの同じ位置に展開しました！`)
   }
 
   // 消しゴム矩形の削除
   const handleRemoveRedaction = (id: string) => {
     setRedactions((prev) => prev.filter((r) => r.id !== id))
+    if (lastAddedRect && lastAddedRect.id === id) {
+      setLastAddedRect(null)
+    }
   }
 
-  // 現在ページの消しゴム枠を全クリア
+  // 現在ページの消しゴム枠をクリア
   const handleClearPageRedactions = () => {
     setRedactions((prev) => prev.filter((r) => r.pageIndex !== currentPage))
+    if (lastAddedRect && lastAddedRect.pageIndex === currentPage) {
+      setLastAddedRect(null)
+    }
+  }
+
+  // 全ページの消しゴム枠を一括クリア
+  const handleClearAllRedactions = () => {
+    if (redactions.length === 0) return
+    if (window.confirm(`全ページの消しゴム枠（合計 ${redactions.length} 箇所）をすべて解除しますか？`)) {
+      setRedactions([])
+      setLastAddedRect(null)
+      showToast('🗑️ 全ページの消しゴム枠をすべて解除しました。')
+    }
   }
 
   // キーワード一括検索消しゴム
@@ -215,6 +254,7 @@ export default function App() {
       setFileName(null)
       setDocInfo(null)
       setRedactions([])
+      setLastAddedRect(null)
       setPageImages(new Map())
       setThumbnails(new Map())
     }
@@ -268,11 +308,15 @@ export default function App() {
             zoom={zoom}
             colorMode={colorMode}
             pageRedactionCount={currentPageRedactions.length}
+            totalRedactionCount={redactions.length}
+            hasLastSelectedArea={lastAddedRect !== null}
             onPageChange={setCurrentPage}
             onZoomChange={setZoom}
             onColorModeChange={setColorMode}
             onClearPageRedactions={handleClearPageRedactions}
+            onClearAllRedactions={handleClearAllRedactions}
             onKeywordSearch={handleKeywordSearch}
+            onApplyAreaToAllPages={handleApplyAreaToAllPages}
           />
 
           {/* メインワークスペース: サムネイル + メインビューア */}

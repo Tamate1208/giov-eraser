@@ -17,11 +17,15 @@ interface ToolbarProps {
   zoom: number;
   colorMode: 'black' | 'white';
   pageRedactionCount: number;
+  totalRedactionCount: number;
+  hasLastSelectedArea: boolean;
   onPageChange: (newPage: number) => void;
   onZoomChange: (newZoom: number) => void;
   onColorModeChange: (mode: 'black' | 'white') => void;
   onClearPageRedactions: () => void;
+  onClearAllRedactions: () => void;
   onKeywordSearch: (keyword: string, searchAllPages: boolean) => void;
+  onApplyAreaToAllPages: () => void;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
@@ -30,11 +34,15 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   zoom,
   colorMode,
   pageRedactionCount,
+  totalRedactionCount,
+  hasLastSelectedArea,
   onPageChange,
   onZoomChange,
   onColorModeChange,
   onClearPageRedactions,
+  onClearAllRedactions,
   onKeywordSearch,
+  onApplyAreaToAllPages,
 }) => {
   const [keyword, setKeyword] = useState('')
   const [isSearching, setIsSearching] = useState(false)
@@ -48,11 +56,16 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   }
 
   const handleSearchAll = async () => {
-    if (!keyword.trim()) return
-    setIsSearching(true)
-    await onKeywordSearch(keyword.trim(), true)
-    setIsSearching(false)
+    if (keyword.trim()) {
+      setIsSearching(true)
+      await onKeywordSearch(keyword.trim(), true)
+      setIsSearching(false)
+    } else if (hasLastSelectedArea) {
+      onApplyAreaToAllPages()
+    }
   }
+
+  const isAllBtnDisabled = (!keyword.trim() && !hasLastSelectedArea) || isSearching
 
   return (
     <div className="border-b border-slate-800 bg-slate-900/60 backdrop-blur px-6 py-2.5 flex flex-wrap items-center justify-between gap-4 text-xs select-none">
@@ -167,7 +180,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           type="submit"
           disabled={!keyword.trim() || isSearching}
           className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs font-medium transition flex items-center gap-1 border border-slate-700 cursor-pointer"
-          title="このページで見つかった箇所を墨消し指定"
+          title="このページで見つかったキーワードを墨消し指定"
         >
           {isSearching ? (
             <Loader2 className="w-3 h-3 text-rose-400 animate-spin" />
@@ -179,30 +192,57 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         <button
           type="button"
           onClick={handleSearchAll}
-          disabled={!keyword.trim() || isSearching}
-          className="px-2.5 py-1.5 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 border border-rose-800/60 disabled:opacity-40 text-rose-300 text-xs font-medium transition flex items-center gap-1 cursor-pointer"
-          title="全ページで一致する箇所をすべて一括墨消し指定"
+          disabled={isAllBtnDisabled}
+          className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition flex items-center gap-1.5 cursor-pointer ${
+            isAllBtnDisabled
+              ? 'opacity-40 bg-slate-800 border-slate-700 text-slate-400 cursor-not-allowed'
+              : !keyword.trim() && hasLastSelectedArea
+              ? 'bg-rose-600 hover:bg-rose-500 text-white border-rose-400 shadow-md shadow-rose-600/30 ring-1 ring-white/30 animate-pulse'
+              : 'bg-rose-950/70 hover:bg-rose-900 border-rose-800/80 text-rose-300'
+          }`}
+          title={
+            keyword.trim()
+              ? '全ページで一致するキーワードを一括墨消し指定'
+              : hasLastSelectedArea
+              ? '直前にマウスで囲んだ領域を全ページの同じ位置に一括適用'
+              : 'キーワードを入力するか、マウスで領域を囲んでください'
+          }
         >
           {isSearching ? (
-            <Loader2 className="w-3 h-3 text-rose-300 animate-spin" />
+            <Loader2 className="w-3.5 h-3.5 text-rose-300 animate-spin" />
           ) : (
-            <Sparkles className="w-3 h-3 text-rose-400" />
+            <Sparkles className="w-3.5 h-3.5 text-rose-300" />
           )}
-          全頁一括
+          <span>
+            {!keyword.trim() && hasLastSelectedArea ? '囲み領域を全頁一括' : '全頁一括'}
+          </span>
         </button>
       </form>
 
-      {/* 現在ページの消しゴム削除 */}
-      {pageRedactionCount > 0 && (
-        <button
-          onClick={onClearPageRedactions}
-          className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/40 text-rose-400 border border-slate-700 hover:border-rose-800/60 text-xs transition flex items-center gap-1.5 ml-auto"
-          title="このページの消しゴム枠をすべて解除"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-          <span>この頁をクリア ({pageRedactionCount})</span>
-        </button>
-      )}
+      {/* 消しゴム枠クリアボタンエリア */}
+      <div className="flex items-center gap-2 ml-auto">
+        {pageRedactionCount > 0 && (
+          <button
+            onClick={onClearPageRedactions}
+            className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs transition flex items-center gap-1.5 cursor-pointer"
+            title="このページの消しゴム枠をすべて解除"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-slate-400" />
+            <span>この頁をクリア ({pageRedactionCount})</span>
+          </button>
+        )}
+
+        {totalRedactionCount > 0 && (
+          <button
+            onClick={onClearAllRedactions}
+            className="px-2.5 py-1.5 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/80 text-xs font-medium transition flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
+            title="全ページの消しゴム枠をすべて一括解除"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+            <span>全頁クリア (計{totalRedactionCount})</span>
+          </button>
+        )}
+      </div>
     </div>
   )
 }
