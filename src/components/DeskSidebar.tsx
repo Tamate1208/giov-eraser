@@ -15,6 +15,7 @@ import {
   Sparkles,
   CheckCircle2,
   CopyPlus,
+  Printer,
 } from 'lucide-react'
 
 interface DeskSidebarProps {
@@ -36,6 +37,7 @@ interface DeskSidebarProps {
   onRemoveItem: (id: string) => void;
   onClearAll: () => void;
   onExportMergedPdf: () => void;
+  onPrintMergedPdf?: () => void;
   onLoadAsCurrentDoc: () => void;
   onSelectDeskItemPreview?: (item: DeskItem) => void;
   isProcessing?: boolean;
@@ -60,6 +62,7 @@ export const DeskSidebar: React.FC<DeskSidebarProps> = ({
   onRemoveItem,
   onClearAll,
   onExportMergedPdf,
+  onPrintMergedPdf,
   onLoadAsCurrentDoc,
   onSelectDeskItemPreview,
   isProcessing = false,
@@ -472,14 +475,28 @@ export const DeskSidebar: React.FC<DeskSidebarProps> = ({
       {/* フッター: 出力アクション */}
       {items.length > 0 && (
         <div className="p-3 border-t border-slate-800 bg-slate-950/80 flex flex-col gap-2">
-          <button
-            onClick={onExportMergedPdf}
-            disabled={isProcessing}
-            className="w-full px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-600/25 transition active:scale-95 cursor-pointer disabled:opacity-50"
-          >
-            <Download className="w-4 h-4" />
-            <span>束ねてPDFを出力 ({items.length} 頁)</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onExportMergedPdf}
+              disabled={isProcessing}
+              className="flex-1 px-3 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-lg shadow-blue-600/25 transition active:scale-95 cursor-pointer disabled:opacity-50"
+            >
+              <Download className="w-4 h-4 shrink-0" />
+              <span>束ねて出力 ({items.length}頁)</span>
+            </button>
+
+            {onPrintMergedPdf && (
+              <button
+                onClick={onPrintMergedPdf}
+                disabled={isProcessing}
+                className="px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs font-semibold flex items-center justify-center gap-1.5 border border-slate-700 transition active:scale-95 cursor-pointer disabled:opacity-50"
+                title="作業机で束ねたページをそのまま直接印刷します"
+              >
+                <Printer className="w-4 h-4 text-blue-400 shrink-0" />
+                <span>印刷</span>
+              </button>
+            )}
+          </div>
 
           <button
             onClick={onLoadAsCurrentDoc}

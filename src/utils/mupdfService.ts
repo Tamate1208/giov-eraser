@@ -73,13 +73,82 @@ export interface PdfPageInfo {
   rotation: number;
 }
 
+export interface HubSignatureInfo {
+  timestamp: string;
+  operation: string;
+  version: string;
+}
+
 export interface PdfDocumentInfo {
   numPages: number;
   pages: PdfPageInfo[];
+  hubSignature?: HubSignatureInfo | null;
 }
 
 /**
- * PDFのメタ情報取得（ページ回転考慮）
+ * 出力PDFの内部辞書（/Root および 各ページの /PieceInfo 風キー）に
+ * 外見・印刷・マウス選択・一般プロパティに一切現れないステルス刻印を書き込む
+ */
+export function stampHubSignature(doc: any, operation: string): void {
+  try {
+    const payload = JSON.stringify({
+      g: 'GioV_PDF_Hub',
+      v: '1.0',
+      t: new Date().toISOString(),
+      op: operation,
+    });
+    const encoded = 'GV1_' + btoa(encodeURIComponent(payload));
+    const trailer = doc.getTrailer();
+    const root = trailer?.get('Root');
+    if (root && !root.isNull()) {
+      root.put('GV_Sig', doc.newString(encoded));
+    }
+    const pageCount = doc.countPages();
+    for (let i = 0; i < pageCount; i++) {
+      const p = doc.loadPage(i);
+      p.getObject()?.put('GV_Sig', doc.newString(encoded));
+      p.destroy();
+    }
+  } catch {}
+}
+
+/**
+ * PDF内部のステルス刻印（/GV_Sig）を検出・デコードする
+ */
+function readHubSignature(doc: any): HubSignatureInfo | null {
+  try {
+    let raw: string | null = null;
+    const trailer = doc.getTrailer();
+    const root = trailer?.get('Root');
+    const rootSig = root?.get('GV_Sig');
+    if (rootSig && !rootSig.isNull()) {
+      raw = rootSig.asString();
+    }
+    if (!raw && doc.countPages() > 0) {
+      const p0 = doc.loadPage(0);
+      const pSig = p0.getObject()?.get('GV_Sig');
+      if (pSig && !pSig.isNull()) {
+        raw = pSig.asString();
+      }
+      p0.destroy();
+    }
+    if (raw && raw.startsWith('GV1_')) {
+      const jsonStr = decodeURIComponent(atob(raw.slice(4)));
+      const data = JSON.parse(jsonStr);
+      if (data && data.g === 'GioV_PDF_Hub') {
+        return {
+          timestamp: data.t || '',
+          operation: data.op || '出力',
+          version: data.v || '1.0',
+        };
+      }
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * PDFのメタ情報取得（ページ回転考慮 ＆ ステルス刻印の検出）
  */
 export async function getPdfInfo(
   pdfBytes: Uint8Array,
@@ -89,6 +158,7 @@ export async function getPdfInfo(
   const doc = m.Document.openDocument(pdfBytes, 'application/pdf');
   const numPages = doc.countPages();
   const pages: PdfPageInfo[] = [];
+  const hubSignature = readHubSignature(doc);
 
   for (let i = 0; i < numPages; i++) {
     const page = doc.loadPage(i);
@@ -119,7 +189,7 @@ export async function getPdfInfo(
   }
   doc.destroy();
 
-  return { numPages, pages };
+  return { numPages, pages, hubSignature };
 }
 
 /**
@@ -204,6 +274,7 @@ export async function mergePdfFiles(
     srcDoc.destroy();
   }
 
+  stampHubSignature(targetDoc, 'PDF追加結合');
   const out = toSafeUint8Array(targetDoc.saveToBuffer('clean,garbage'));
   targetDoc.destroy();
   return out;
@@ -241,6 +312,7 @@ export async function extractPages(
     }
   }
 
+  stampHubSignature(newDoc, `ページ抽出 (${sorted.length}頁)`);
   const out = toSafeUint8Array(newDoc.saveToBuffer('clean,garbage'));
   newDoc.destroy();
   srcDoc.destroy();
@@ -265,6 +337,7 @@ export async function deletePagesFromPdf(
     }
   }
 
+  stampHubSignature(doc, 'ページ削除編集');
   const out = toSafeUint8Array(doc.saveToBuffer('clean,garbage'));
   doc.destroy();
   return out;
@@ -870,6 +943,14 @@ export async function applyRedactions(
       console.error('Failed to write bookmarks to PDF:', err);
     }
   }
+
+  // 6. ステルス出力記録の刻印（外見・印刷・マウス選択には一切現れない内部辞書署名）
+  const opParts: string[] = [];
+  if (redactions.length > 0) opParts.push(`墨消し${redactions.length}箇所`);
+  if (drawings.length > 0) opParts.push(`校正描画${drawings.length}件`);
+  if (Object.values(pageRotations).some((r) => r !== 0)) opParts.push('ページ回転');
+  if (bookmarks.length > 0) opParts.push('しおり編集');
+  stampHubSignature(doc, opParts.length > 0 ? opParts.join('・') : 'PDF出力');
 
   // クリーンなPDFとして保存 (不要オブジェクト・切り取られたストリームの完全ガベージコレクション)
   const cleanDocBytes = toSafeUint8Array(doc.saveToBuffer('clean,garbage'));

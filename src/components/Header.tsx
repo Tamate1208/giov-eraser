@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { Eraser, Download, FileUp, ShieldCheck, RefreshCw, Layers, Scale, X } from 'lucide-react'
+import { Eraser, Download, FileUp, ShieldCheck, RefreshCw, Layers, Scale, X, Printer, CheckCircle2 } from 'lucide-react'
+import { HubSignatureInfo } from '../utils/mupdfService'
 
 interface HeaderProps {
   fileName: string | null;
@@ -8,8 +9,10 @@ interface HeaderProps {
   isProcessing: boolean;
   isDeskOpen?: boolean;
   deskItemCount?: number;
+  hubSignature?: HubSignatureInfo | null;
   onUploadClick: () => void;
   onSaveClick: () => void;
+  onPrintClick?: () => void;
   onResetClick: () => void;
   onToggleDesk?: () => void;
 }
@@ -21,8 +24,10 @@ export const Header: React.FC<HeaderProps> = ({
   isProcessing,
   isDeskOpen = false,
   deskItemCount = 0,
+  hubSignature,
   onUploadClick,
   onSaveClick,
+  onPrintClick,
   onResetClick,
   onToggleDesk,
 }) => {
@@ -55,11 +60,23 @@ export const Header: React.FC<HeaderProps> = ({
               校正・計測・編纂デスク統合
             </span>
           </div>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-2">
             {fileName ? (
-              <span className="text-blue-300 font-medium truncate inline-block max-w-[360px]">
-                {fileName}
-              </span>
+              <>
+                <span className="text-blue-300 font-medium truncate inline-block max-w-[360px]">
+                  {fileName}
+                </span>
+                {hubSignature && (
+                  <span
+                    onClick={() => setIsLicenseOpen(true)}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-emerald-950/80 border border-emerald-500/40 text-[10px] text-emerald-300 font-mono cursor-pointer hover:bg-emerald-900/80 transition"
+                    title={`GioV PDF Hub 出力検証済 (${new Date(hubSignature.timestamp).toLocaleString('ja-JP')} / ${hubSignature.operation})`}
+                  >
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                    <span>Hub Verified</span>
+                  </span>
+                )}
+              </>
             ) : (
               '墨消し・校正描画・寸法計測・資料編纂を完全ローカル完結で統合した高機能PDFワークスペース'
             )}
@@ -127,6 +144,18 @@ export const Header: React.FC<HeaderProps> = ({
           <span>{fileName ? '別のPDFを開く' : 'PDFファイルを開く'}</span>
         </button>
 
+        {fileName && onPrintClick && (
+          <button
+            onClick={onPrintClick}
+            disabled={isProcessing}
+            className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition flex items-center gap-1.5 border border-slate-700 active:scale-95 shadow-sm cursor-pointer disabled:opacity-50"
+            title="現在の編集内容（墨消し・校正・回転）を反映して直接プリンターで印刷します"
+          >
+            <Printer className="w-4 h-4 text-blue-400" />
+            <span>印刷</span>
+          </button>
+        )}
+
         {fileName && (
           <button
             onClick={onSaveClick}
@@ -178,6 +207,20 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
 
             <div className="text-xs leading-relaxed text-slate-300 space-y-3 max-h-[65vh] overflow-y-auto pr-1">
+              {hubSignature && (
+                <div className="p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-200 space-y-1">
+                  <div className="font-bold text-emerald-300 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>出力証明（ステルス刻印）検証結果：本アプリ出力ファイル</span>
+                  </div>
+                  <div className="text-[11px] text-emerald-300/90 font-mono pl-5 space-y-0.5">
+                    <div>・出力日時: {new Date(hubSignature.timestamp).toLocaleString('ja-JP')}</div>
+                    <div>・処理種別: {hubSignature.operation}</div>
+                    <div>・エンジン: GioV PDF Hub v{hubSignature.version}</div>
+                  </div>
+                </div>
+              )}
+
               <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800">
                 <div className="font-bold text-white mb-1">
                   GioV PDF Hub — Open Source Edition

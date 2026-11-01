@@ -888,6 +888,95 @@ export default function App() {
     }
   }
 
+  // 任意のPDFバイト列をブラウザのネイティブ印刷ダイアログで直接印刷するヘルパー
+  const triggerPdfPrint = (targetPdfBytes: Uint8Array) => {
+    const blob = new Blob([targetPdfBytes as BlobPart], { type: 'application/pdf' })
+    const url = URL.createObjectURL(blob)
+
+    // 既存の印刷用 iframe があれば除去
+    const oldFrame = document.getElementById('giov-print-frame') as HTMLIFrameElement | null
+    if (oldFrame) {
+      oldFrame.remove()
+    }
+
+    const iframe = document.createElement('iframe')
+    iframe.id = 'giov-print-frame'
+    iframe.style.position = 'fixed'
+    iframe.style.right = '0'
+    iframe.style.bottom = '0'
+    iframe.style.width = '1px'
+    iframe.style.height = '1px'
+    iframe.style.opacity = '0'
+    iframe.style.pointerEvents = 'none'
+    iframe.src = url
+
+    iframe.onload = () => {
+      setTimeout(() => {
+        try {
+          iframe.contentWindow?.focus()
+          iframe.contentWindow?.print()
+        } catch (err) {
+          console.warn('iframe print fallback to window.open:', err)
+          window.open(url, '_blank')
+        }
+      }, 300)
+    }
+
+    document.body.appendChild(iframe)
+    // 印刷完了後（十分な時間経過後）にURLを解放
+    setTimeout(() => {
+      URL.revokeObjectURL(url)
+    }, 120000)
+  }
+
+  // メイン画面のPDF（現在の墨消し・校正・回転を反映した状態）を直接印刷
+  const handlePrint = async () => {
+    if (!pdfBytes) return
+    setIsProcessing(true)
+    try {
+      const hasEdits =
+        redactions.length > 0 ||
+        drawings.length > 0 ||
+        Object.values(pageRotations).some((r) => r !== 0) ||
+        bookmarks.length > 0
+
+      const bytesToPrint = hasEdits
+        ? await applyRedactions(
+            pdfBytes,
+            redactions,
+            colorMode,
+            drawings,
+            pageRotations,
+            bookmarks
+          )
+        : pdfBytes
+
+      triggerPdfPrint(bytesToPrint)
+      showToast('🖨️ 印刷ダイアログを起動しました')
+    } catch (err) {
+      console.error('印刷処理エラー:', err)
+      alert('印刷データの準備中にエラーが発生しました。')
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // 作業机で束ねたPDFを直接印刷
+  const handlePrintMergedPdf = async () => {
+    if (deskItems.length === 0) return
+    setIsProcessing(true)
+    try {
+      const mergedBytes = await buildMergedPdfFromDesk(deskItems, deskDocs)
+      triggerPdfPrint(mergedBytes)
+      showToast(`🖨️ 作業机の編纂PDF（計 ${deskItems.length} 頁）の印刷ダイアログを起動しました`)
+    } catch (err) {
+      console.error('作業机印刷エラー:', err)
+      alert('作業机の印刷データ準備中にエラーが発生しました。')
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
   const showToast = (msg: string) => {
     setSuccessToast(msg)
     setTimeout(() => {
@@ -1192,8 +1281,10 @@ export default function App() {
         isProcessing={isProcessing}
         isDeskOpen={isDeskOpen}
         deskItemCount={deskItems.length}
+        hubSignature={docInfo?.hubSignature}
         onUploadClick={() => fileInputRef.current?.click()}
         onSaveClick={handleSave}
+        onPrintClick={handlePrint}
         onResetClick={handleReset}
         onToggleDesk={() => setIsDeskOpen((prev) => !prev)}
       />
@@ -1335,6 +1426,7 @@ export default function App() {
               onRemoveItem={handleRemoveDeskItem}
               onClearAll={handleClearAllDesk}
               onExportMergedPdf={handleExportMergedPdf}
+              onPrintMergedPdf={handlePrintMergedPdf}
               onLoadAsCurrentDoc={handleLoadDeskAsCurrentDoc}
               onSelectDeskItemPreview={handleSelectDeskItemPreview}
               isProcessing={isProcessing}

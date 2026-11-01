@@ -1,5 +1,5 @@
 import { DeskDoc, DeskItem } from '../types/desk'
-import { renderPageImage, getPdfInfo, getMuPdf } from './mupdfService'
+import { renderPageImage, getPdfInfo, getMuPdf, stampHubSignature } from './mupdfService'
 
 /**
  * 外部PDFファイルからDeskDocを作成し、全ページまたは特定ページのDeskItem群を生成
@@ -95,6 +95,7 @@ export async function buildMergedPdfFromDesk(
     }
   }
 
+  stampHubSignature(newDoc, `作業机編纂 (${items.length}頁)`)
   const outBuf = newDoc.saveToBuffer('clean,garbage')
   const u8 = new Uint8Array(outBuf.asUint8Array())
   try {
