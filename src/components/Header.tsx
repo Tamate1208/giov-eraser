@@ -1,14 +1,17 @@
 import React from 'react'
-import { Eraser, Download, FileUp, ShieldCheck, RefreshCw } from 'lucide-react'
+import { Eraser, Download, FileUp, ShieldCheck, RefreshCw, Layers } from 'lucide-react'
 
 interface HeaderProps {
   fileName: string | null;
   totalRedactions: number;
   totalDrawings?: number;
   isProcessing: boolean;
+  isDeskOpen?: boolean;
+  deskItemCount?: number;
   onUploadClick: () => void;
   onSaveClick: () => void;
   onResetClick: () => void;
+  onToggleDesk?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -16,9 +19,12 @@ export const Header: React.FC<HeaderProps> = ({
   totalRedactions,
   totalDrawings = 0,
   isProcessing,
+  isDeskOpen = false,
+  deskItemCount = 0,
   onUploadClick,
   onSaveClick,
   onResetClick,
+  onToggleDesk,
 }) => {
   const totalCount = totalRedactions + totalDrawings
   const saveBtnLabel = isProcessing
@@ -87,6 +93,28 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="hidden md:inline">リセット</span>
             </button>
           </>
+        )}
+
+        {onToggleDesk && (
+          <button
+            onClick={onToggleDesk}
+            className={`px-3 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 border active:scale-95 cursor-pointer shadow-sm ${
+              isDeskOpen
+                ? 'bg-blue-600 hover:bg-blue-500 text-white border-blue-400 ring-2 ring-blue-400/30'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+            }`}
+            title="作業机（複数PDFの束ね・編纂デスク）を開閉"
+          >
+            <Layers className={`w-4 h-4 ${isDeskOpen ? 'text-white' : 'text-blue-400'}`} />
+            <span>作業机</span>
+            {deskItemCount > 0 && (
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                isDeskOpen ? 'bg-white text-blue-700' : 'bg-blue-600 text-white'
+              }`}>
+                {deskItemCount}
+              </span>
+            )}
+          </button>
         )}
 
         <button

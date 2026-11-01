@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { PdfPageInfo, RedactRect } from '../utils/mupdfService'
 import { BookmarkItem } from '../types/drawing'
 import {
@@ -16,9 +16,12 @@ import {
   ListTree,
   CheckSquare,
   Square,
+  Layers,
 } from 'lucide-react'
 
 interface ThumbnailSidebarProps {
+  width?: number;
+  onResizeWidth?: (w: number) => void;
   pages: PdfPageInfo[];
   currentPage: number;
   redactions: RedactRect[];
@@ -34,6 +37,8 @@ interface ThumbnailSidebarProps {
   onTogglePageSelectForExtract: (pageIndex: number) => void;
   onSelectAllPagesForExtract: () => void;
   onClearPageSelectionForExtract: () => void;
+  onAddToDesk?: (pageIndex: number) => void;
+  onAddSelectedToDesk?: (indices: number[]) => void;
   // しおり操作
   onAddBookmark: (pageIndex: number, title?: string) => void;
   onUpdateBookmark: (id: string, newTitle: string) => void;
@@ -41,6 +46,8 @@ interface ThumbnailSidebarProps {
 }
 
 export const ThumbnailSidebar: React.FC<ThumbnailSidebarProps> = ({
+  width = 256,
+  onResizeWidth,
   pages,
   currentPage,
   redactions,
@@ -56,6 +63,8 @@ export const ThumbnailSidebar: React.FC<ThumbnailSidebarProps> = ({
   onTogglePageSelectForExtract,
   onSelectAllPagesForExtract,
   onClearPageSelectionForExtract,
+  onAddToDesk,
+  onAddSelectedToDesk,
   onAddBookmark,
   onUpdateBookmark,
   onDeleteBookmark,
@@ -109,8 +118,56 @@ export const ThumbnailSidebar: React.FC<ThumbnailSidebarProps> = ({
     onExtractPages(targetIndices)
   }
 
+  const [isResizing, setIsResizing] = useState(false)
+  const resizeStartXRef = useRef<number>(0)
+  const resizeStartWidthRef = useRef<number>(width)
+
+  // ドラッグリサイズ処理
+  useEffect(() => {
+    if (!isResizing || !onResizeWidth) return
+
+    const handlePointerMove = (e: PointerEvent) => {
+      // 左サイドバーなので、右に引くと幅が増え、左に引くと幅が減る
+      const deltaX = e.clientX - resizeStartXRef.current
+      const newWidth = Math.min(500, Math.max(180, resizeStartWidthRef.current + deltaX))
+      onResizeWidth(newWidth)
+    }
+
+    const handlePointerUp = () => {
+      setIsResizing(false)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+  }, [isResizing, onResizeWidth])
+
   return (
-    <aside className="w-64 border-r border-slate-800 bg-slate-900/80 backdrop-blur-md overflow-hidden flex flex-col select-none shadow-xl z-20">
+    <aside
+      style={{ width: `${width}px` }}
+      className="relative shrink-0 border-r border-slate-800 bg-slate-900/80 backdrop-blur-md overflow-hidden flex flex-col select-none shadow-xl z-20 transition-all duration-75"
+    >
+      {/* リサイザーバー (右端) */}
+      {onResizeWidth && (
+        <div
+          onPointerDown={(e) => {
+            e.preventDefault()
+            setIsResizing(true)
+            resizeStartXRef.current = e.clientX
+            resizeStartWidthRef.current = width
+          }}
+          onDoubleClick={() => onResizeWidth(256)}
+          title="ドラッグで幅を調整 / ダブルクリックで標準幅に戻す"
+          className={`absolute right-0 top-0 bottom-0 w-1.5 -mr-1 cursor-col-resize hover:bg-blue-500 transition-colors z-30 group flex items-center justify-center ${
+            isResizing ? 'bg-blue-500' : 'bg-transparent'
+          }`}
+        >
+          <div className="w-0.5 h-8 bg-slate-600 rounded-full group-hover:bg-white transition-colors" />
+        </div>
+      )}
       {/* 隠しPDFマージ用ファイルinput */}
       <input
         ref={mergeFileInputRef}
@@ -197,18 +254,34 @@ export const ThumbnailSidebar: React.FC<ThumbnailSidebarProps> = ({
                 </button>
               </div>
 
-              <button
-                onClick={handleExtractClick}
-                className="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600/30 hover:bg-blue-600/50 text-blue-300 font-bold border border-blue-500/40 transition cursor-pointer active:scale-95"
-                title={
-                  selectedPagesForExtract.size > 0
-                    ? `選択した${selectedPagesForExtract.size}ページを別PDFとして抽出保存`
-                    : '現在のページを別PDFとして抽出保存'
-                }
-              >
-                <Scissors className="w-3 h-3 text-blue-400" />
-                <span>抽出保存</span>
-              </button>
+              <div className="flex items-center gap-1.5">
+                {onAddSelectedToDesk && selectedPagesForExtract.size > 0 && (
+                  <button
+                    onClick={() => {
+                      const indices = Array.from(selectedPagesForExtract).sort((a, b) => a - b)
+                      onAddSelectedToDesk(indices)
+                    }}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 font-bold border border-blue-500/30 transition cursor-pointer active:scale-95"
+                    title={`選択した${selectedPagesForExtract.size}ページを作業机に追加`}
+                  >
+                    <Layers className="w-3 h-3 text-blue-400" />
+                    <span>机へ送る</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={handleExtractClick}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600/30 hover:bg-blue-600/50 text-blue-300 font-bold border border-blue-500/40 transition cursor-pointer active:scale-95"
+                  title={
+                    selectedPagesForExtract.size > 0
+                      ? `選択した${selectedPagesForExtract.size}ページを別PDFとして抽出保存`
+                      : '現在のページを別PDFとして抽出保存'
+                  }
+                >
+                  <Scissors className="w-3 h-3 text-blue-400" />
+                  <span>抽出保存</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -282,8 +355,20 @@ export const ThumbnailSidebar: React.FC<ThumbnailSidebarProps> = ({
                       </div>
                     )}
 
-                    {/* ホバー時に現れるオーバーレイボタン（回転・削除） */}
-                    <div className="absolute inset-0 bg-slate-950/60 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-2 pointer-events-none">
+                    {/* ホバー時に現れるオーバーレイボタン（回転・削除・作業机へ追加） */}
+                    <div className="absolute inset-0 bg-slate-950/60 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-1.5 pointer-events-none">
+                      {onAddToDesk && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onAddToDesk(p.index)
+                          }}
+                          className="p-1.5 rounded-lg bg-blue-600/90 hover:bg-blue-500 text-white shadow-md transition transform hover:scale-110 pointer-events-auto cursor-pointer"
+                          title="このページを作業机に置く"
+                        >
+                          <Layers className="w-4 h-4" />
+                        </button>
+                      )}
                       <button
                         onClick={(e) => {
                           e.stopPropagation()

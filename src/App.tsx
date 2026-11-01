@@ -3,6 +3,9 @@ import { Header } from './components/Header'
 import { Toolbar } from './components/Toolbar'
 import { PdfViewer } from './components/PdfViewer'
 import { ThumbnailSidebar } from './components/ThumbnailSidebar'
+import { DeskSidebar } from './components/DeskSidebar'
+import { DeskDoc, DeskItem } from './types/desk'
+import { createDeskItemsFromPdfFile, buildMergedPdfFromDesk } from './utils/deskService'
 import {
   getPdfInfo,
   renderPageImage,
@@ -84,6 +87,30 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState<boolean>(false)
   const [successToast, setSuccessToast] = useState<string | null>(null)
   const [lastAddedRect, setLastAddedRect] = useState<RedactRect | null>(null)
+
+  // 左右ペイン幅の永続化管理
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(() => {
+    const saved = localStorage.getItem('giov_left_sidebar_width')
+    return saved ? parseInt(saved, 10) || 256 : 256
+  })
+  const [rightSidebarWidth, setRightSidebarWidth] = useState<number>(() => {
+    const saved = localStorage.getItem('giov_right_sidebar_width')
+    return saved ? parseInt(saved, 10) || 340 : 340
+  })
+
+  const handleResizeLeftSidebar = (w: number) => {
+    setLeftSidebarWidth(w)
+    localStorage.setItem('giov_left_sidebar_width', w.toString())
+  }
+  const handleResizeRightSidebar = (w: number) => {
+    setRightSidebarWidth(w)
+    localStorage.setItem('giov_right_sidebar_width', w.toString())
+  }
+
+  // 作業机の state (初期状態は閉じた状態 false: これまでの通常使用を完全維持)
+  const [isDeskOpen, setIsDeskOpen] = useState<boolean>(false)
+  const [deskItems, setDeskItems] = useState<DeskItem[]>([])
+  const [deskDocs, setDeskDocs] = useState<Map<string, DeskDoc>>(new Map())
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -798,6 +825,182 @@ export default function App() {
     }, 4500)
   }
 
+  // 現在開いているドキュメントを deskDocs のプールに同期
+  useEffect(() => {
+    if (!pdfBytes || !fileName || !docInfo) return
+    const docId = 'current_doc'
+    setDeskDocs((prev) => {
+      const next = new Map(prev)
+      next.set(docId, {
+        id: docId,
+        name: fileName,
+        bytes: pdfBytes,
+        pageCount: docInfo.numPages,
+      })
+      return next
+    })
+  }, [pdfBytes, fileName, docInfo])
+
+  // 指定ページを作業机に追加
+  const handleAddToDesk = (pageIdx: number) => {
+    if (!docInfo || !pdfBytes || !fileName) return
+    const page = docInfo.pages[pageIdx]
+    if (!page) return
+
+    const newItem: DeskItem = {
+      id: `item_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      docId: 'current_doc',
+      docName: fileName,
+      pageIndex: pageIdx,
+      pageNumber: pageIdx + 1,
+      rotation: pageRotations[pageIdx] || 0,
+      widthPt: page.width,
+      heightPt: page.height,
+    }
+
+    setDeskItems((prev) => [...prev, newItem])
+    setIsDeskOpen(true)
+    showToast(`p.${pageIdx + 1} を作業机に追加しました`)
+  }
+
+  // 選択中の複数ページを一括で作業机に追加
+  const handleAddSelectedToDesk = (indices: number[]) => {
+    if (!docInfo || !pdfBytes || !fileName || indices.length === 0) return
+
+    const newItems: DeskItem[] = indices.map((idx) => {
+      const page = docInfo.pages[idx]
+      return {
+        id: `item_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+        docId: 'current_doc',
+        docName: fileName,
+        pageIndex: idx,
+        pageNumber: idx + 1,
+        rotation: pageRotations[idx] || 0,
+        widthPt: page ? page.width : 595,
+        heightPt: page ? page.height : 842,
+      }
+    })
+
+    setDeskItems((prev) => [...prev, ...newItems])
+    setIsDeskOpen(true)
+    showToast(`${indices.length} ページを作業机に追加しました`)
+  }
+
+  // 外部PDFファイル群を作業机に追加
+  const handleAddPdfFilesToDesk = async (files: FileList) => {
+    if (files.length === 0) return
+    try {
+      setIsProcessing(true)
+      const newItems: DeskItem[] = []
+      const newDocs: DeskDoc[] = []
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const docId = `ext_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`
+        const res = await createDeskItemsFromPdfFile(file, docId)
+        newDocs.push(res.doc)
+        newItems.push(...res.items)
+      }
+
+      setDeskDocs((prev) => {
+        const next = new Map(prev)
+        newDocs.forEach((d) => next.set(d.id, d))
+        return next
+      })
+      setDeskItems((prev) => [...prev, ...newItems])
+      setIsDeskOpen(true)
+      showToast(`${files.length} 件のPDF（計 ${newItems.length} 頁）を作業机に追加しました`)
+    } catch (err) {
+      console.error('外部PDF追加エラー:', err)
+      alert('PDFファイルの追加に失敗しました。')
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // 作業机アイテムの並べ替え
+  const handleMoveDeskItem = (fromIdx: number, toIdx: number) => {
+    setDeskItems((prev) => {
+      if (toIdx < 0 || toIdx >= prev.length) return prev
+      const next = [...prev]
+      const [moved] = next.splice(fromIdx, 1)
+      next.splice(toIdx, 0, moved)
+      return next
+    })
+  }
+
+  // 作業机アイテムの90度回転
+  const handleRotateDeskItem = (id: string) => {
+    setDeskItems((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, rotation: (item.rotation + 90) % 360 } : item
+      )
+    )
+  }
+
+  // 作業机アイテムの削除
+  const handleRemoveDeskItem = (id: string) => {
+    setDeskItems((prev) => prev.filter((item) => item.id !== id))
+  }
+
+  // 作業机全クリア
+  const handleClearAllDesk = () => {
+    setDeskItems([])
+  }
+
+  // 作業机の編纂PDFを出力ダウンロード
+  const handleExportMergedPdf = async () => {
+    if (deskItems.length === 0) return
+    try {
+      setIsProcessing(true)
+      const mergedBytes = await buildMergedPdfFromDesk(deskItems, deskDocs)
+      const blob = new Blob([mergedBytes as BlobPart], { type: 'application/pdf' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `編纂書類_${new Date().toISOString().slice(0, 10)}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      showToast(`計 ${deskItems.length} ページの編纂PDFを出力しました`)
+    } catch (err) {
+      console.error('PDF編纂出力エラー:', err)
+      alert('PDFの編纂・結合に失敗しました。')
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // 作業机の編纂PDFをメイン画面で作業対象として開く
+  const handleLoadDeskAsCurrentDoc = async () => {
+    if (deskItems.length === 0) return
+    if (!window.confirm('作業机で編纂した内容をメイン画面で開きますか？\n（現在の墨消しや描画はリセットされます）')) return
+
+    try {
+      setIsProcessing(true)
+      const mergedBytes = await buildMergedPdfFromDesk(deskItems, deskDocs)
+      const file = new File([mergedBytes as BlobPart], `編纂書類_${new Date().toISOString().slice(0, 10)}.pdf`, {
+        type: 'application/pdf',
+      })
+      await loadPdf(file)
+      showToast('編纂したPDFをメイン画面に読み込みました')
+    } catch (err) {
+      console.error('メイン読み込みエラー:', err)
+      alert('編纂PDFの読み込みに失敗しました。')
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // 作業机カードクリック時のプレビュー連携
+  const handleSelectDeskItemPreview = (item: DeskItem) => {
+    if (item.docId === 'current_doc') {
+      setCurrentPage(item.pageIndex)
+    }
+  }
+
   // リセット
   const handleReset = () => {
     if (window.confirm('現在の設定をリセットして別のPDFを開きますか？')) {
@@ -844,9 +1047,12 @@ export default function App() {
         totalRedactions={redactions.length}
         totalDrawings={drawings.length}
         isProcessing={isProcessing}
+        isDeskOpen={isDeskOpen}
+        deskItemCount={deskItems.length}
         onUploadClick={() => fileInputRef.current?.click()}
         onSaveClick={handleSave}
         onResetClick={handleReset}
+        onToggleDesk={() => setIsDeskOpen((prev) => !prev)}
       />
 
       {/* トースト通知 */}
@@ -908,6 +1114,8 @@ export default function App() {
           <div className="flex-1 flex overflow-hidden">
             {docInfo && (
               <ThumbnailSidebar
+                width={leftSidebarWidth}
+                onResizeWidth={handleResizeLeftSidebar}
                 pages={docInfo.pages}
                 currentPage={currentPage}
                 redactions={redactions}
@@ -923,6 +1131,8 @@ export default function App() {
                 onTogglePageSelectForExtract={handleTogglePageSelectForExtract}
                 onSelectAllPagesForExtract={handleSelectAllPagesForExtract}
                 onClearPageSelectionForExtract={handleClearPageSelectionForExtract}
+                onAddToDesk={handleAddToDesk}
+                onAddSelectedToDesk={handleAddSelectedToDesk}
                 onAddBookmark={handleAddBookmark}
                 onUpdateBookmark={handleUpdateBookmark}
                 onDeleteBookmark={handleDeleteBookmark}
@@ -953,6 +1163,27 @@ export default function App() {
               onAddDrawing={handleAddDrawing}
               onUpdateDrawing={handleUpdateDrawing}
               onRemoveDrawing={handleRemoveDrawing}
+            />
+
+            <DeskSidebar
+              width={rightSidebarWidth}
+              isOpen={isDeskOpen}
+              items={deskItems}
+              docsMap={deskDocs}
+              currentPageIndex={currentPage}
+              currentDocName={fileName}
+              onClose={() => setIsDeskOpen(false)}
+              onResizeWidth={handleResizeRightSidebar}
+              onAddCurrentPage={() => handleAddToDesk(currentPage)}
+              onAddPdfFiles={handleAddPdfFilesToDesk}
+              onMoveItem={handleMoveDeskItem}
+              onRotateItem={handleRotateDeskItem}
+              onRemoveItem={handleRemoveDeskItem}
+              onClearAll={handleClearAllDesk}
+              onExportMergedPdf={handleExportMergedPdf}
+              onLoadAsCurrentDoc={handleLoadDeskAsCurrentDoc}
+              onSelectDeskItemPreview={handleSelectDeskItemPreview}
+              isProcessing={isProcessing}
             />
           </div>
         </>
