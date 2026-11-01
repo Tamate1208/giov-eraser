@@ -1,5 +1,5 @@
-import React from 'react'
-import { Eraser, Download, FileUp, ShieldCheck, RefreshCw, Layers } from 'lucide-react'
+import React, { useState } from 'react'
+import { Eraser, Download, FileUp, ShieldCheck, RefreshCw, Layers, Scale, X } from 'lucide-react'
 
 interface HeaderProps {
   fileName: string | null;
@@ -26,6 +26,7 @@ export const Header: React.FC<HeaderProps> = ({
   onResetClick,
   onToggleDesk,
 }) => {
+  const [isLicenseOpen, setIsLicenseOpen] = useState(false)
   const totalCount = totalRedactions + totalDrawings
   const saveBtnLabel = isProcessing
     ? '処理中...'
@@ -141,7 +142,118 @@ export const Header: React.FC<HeaderProps> = ({
             <span>{saveBtnLabel}</span>
           </button>
         )}
+
+        <button
+          onClick={() => setIsLicenseOpen(true)}
+          className="p-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700/80 transition cursor-pointer"
+          title="オープンソースライセンス・著作権情報 (AGPL-3.0)"
+        >
+          <Scale className="w-4 h-4" />
+        </button>
       </div>
+
+      {/* ライセンス＆著作権情報モーダル (AGPL-3.0 / OSS 準拠表記) */}
+      {isLicenseOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+          onClick={() => setIsLicenseOpen(false)}
+        >
+          <div
+            className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl text-slate-200 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Scale className="w-5 h-5 text-blue-400" />
+                <h2 className="text-base font-bold text-white">
+                  ライセンス・著作権情報 (Open Source Notices)
+                </h2>
+              </div>
+              <button
+                onClick={() => setIsLicenseOpen(false)}
+                className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="text-xs leading-relaxed text-slate-300 space-y-3 max-h-[65vh] overflow-y-auto pr-1">
+              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800">
+                <div className="font-bold text-white mb-1">
+                  GioV PDF Hub — Open Source Edition
+                </div>
+                <p className="text-slate-400">
+                  本アプリケーションは、端末内（ブラウザ内のWebAssembly）のみで完全ローカル動作するオープンソースソフトウェアであり、<strong>GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)</strong> の下で提供されています。入力されたPDFデータが外部サーバーへ送信されることは一切ありません。
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="font-semibold text-slate-200">
+                  同梱・使用しているオープンソースライブラリ:
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-slate-800/50 border border-slate-700/60">
+                  <div className="flex items-center justify-between font-semibold text-white">
+                    <span>MuPDF (mupdf.js)</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 font-mono">
+                      AGPL-3.0-or-later
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    Copyright (C) 2006-2026 Artifex Software, Inc.<br />
+                    This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-slate-800/50 border border-slate-700/60">
+                  <div className="flex items-center justify-between font-semibold text-white">
+                    <span>React / React DOM</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
+                      MIT License
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    Copyright (c) Meta Platforms, Inc. and affiliates.
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-slate-800/50 border border-slate-700/60">
+                  <div className="flex items-center justify-between font-semibold text-white">
+                    <span>Lucide Icons (lucide-react)</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
+                      ISC License
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    Copyright (c) Cole Bemis and Lucide Contributors.
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-slate-800/50 border border-slate-700/60">
+                  <div className="flex items-center justify-between font-semibold text-white">
+                    <span>Tailwind CSS</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
+                      MIT License
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    Copyright (c) Tailwind Labs, Inc.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-800">
+              <button
+                onClick={() => setIsLicenseOpen(false)}
+                className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition cursor-pointer"
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   )
 }

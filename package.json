@@ -1,11 +1,13 @@
 {
   "name": "giov-pdf-hub",
-  "private": true,
+  "private": false,
   "version": "1.0.0",
+  "license": "AGPL-3.0-or-later",
+  "description": "GioV PDF Hub - 完全ローカル・オフライン完結の不可逆墨消し・校正描画・寸法計測・資料編纂オープンソースPDFワークスペース",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && cp dist/index.html GioV_PDF_Hub.html && cp dist/index.html ../GioV_PDF_Hub.html",
+    "build": "tsc -b && vite build && cp dist/index.html GioV_PDF_Hub.html && (cp dist/index.html ../GioV_PDF_Hub.html 2>/dev/null || true)",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -1,5 +1,24 @@
+# Dependencies
 node_modules
-dist
 dist-ssr
+
+# Secrets & Credentials (DLP / Security Guardrails)
+.env
+.env.*
 *.local
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+id_rsa*
+id_ed25519*
+
+# OS / Editor
 .DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
