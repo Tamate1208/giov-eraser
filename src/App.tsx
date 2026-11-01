@@ -12,12 +12,16 @@ import {
   searchPageKeyword,
   extractTextRectsInBBox,
   applyRedactions,
+  saveEditablePdf,
+  extractEditableState,
+  compactPdf,
   mergePdfFiles,
   extractPages,
   deletePagesFromPdf,
   loadPdfBookmarks,
   RedactRect,
   PdfDocumentInfo,
+  CompactLevel,
 } from './utils/mupdfService'
 import {
   AppMode,
@@ -168,28 +172,40 @@ export default function App() {
     }
   }
 
-  // PDF ファイルのロード処理
+  // PDF ファイルのロード処理（一時保存データの自動検出・復元にも対応）
   const loadPdf = async (file: File) => {
     const genId = ++loadGenRef.current
     try {
       setIsLoadingPdf(true)
       setFileName(file.name)
       const buffer = await file.arrayBuffer()
-      const bytes = new Uint8Array(buffer)
+      const rawBytes = new Uint8Array(buffer)
+
+      // 一時保存（再編集可）データ (/GV_Draft) の有無をチェック
+      const restored = await extractEditableState(rawBytes)
+      const bytes = restored ? restored.cleanPdfBytes : rawBytes
+      const restoredRotations = restored?.state.pageRotations || {}
+
       setPdfBytes(bytes)
 
       // メタ情報としおり情報の取得
       const [info, bms] = await Promise.all([
-        getPdfInfo(bytes),
+        getPdfInfo(bytes, restoredRotations),
         loadPdfBookmarks(bytes),
       ])
       setDocInfo(info)
-      setBookmarks(bms)
-      setPageRotations({})
+      setBookmarks(
+        restored?.state.bookmarks && restored.state.bookmarks.length > 0
+          ? restored.state.bookmarks
+          : bms
+      )
+      setPageRotations(restoredRotations)
       setSelectedPagesForExtract(new Set())
       setCurrentPage(0)
-      setRedactions([])
-      setDrawings([])
+      setRedactions(restored?.state.redactions || [])
+      setDrawings(restored?.state.drawings || [])
+      if (restored?.state.colorMode) setColorMode(restored.state.colorMode)
+      if (restored?.state.rulerScale) setRulerScale(restored.state.rulerScale)
       setHistory([])
       setLastAddedRect(null)
       setPageImages((prev) => {
@@ -202,12 +218,21 @@ export default function App() {
       })
 
       // 最初のページの高画質画像を生成した時点で即座に画面を表示！
-      const firstPageImg = await renderPageImage(bytes, 0, 1.5)
+      const firstPageRot = restoredRotations[0] || 0
+      const firstPageImg = await renderPageImage(bytes, 0, 1.5, firstPageRot)
       setPageImages(new Map([[0, firstPageImg]]))
       setIsLoadingPdf(false)
 
+      if (restored) {
+        const rCount = restored.state.redactions?.length || 0
+        const dCount = restored.state.drawings?.length || 0
+        showToast(
+          `🔓 一時保存（再編集可）PDFを検出！墨消し枠 ${rCount}箇所・校正描画 ${dCount}件を再編集可能な状態で復元しました。`
+        )
+      }
+
       // サムネイルはバックグラウンドで段階的に非同期生成
-      generateThumbnailsInBatches(bytes, info.pages, {}, genId).catch((err) =>
+      generateThumbnailsInBatches(bytes, info.pages, restoredRotations, genId).catch((err) =>
         console.warn('サムネイル生成エラー:', err)
       )
     } catch (err) {
@@ -888,6 +913,150 @@ export default function App() {
     }
   }
 
+  // 一時保存（再編集可）PDFのダウンロード（物理切除を行わず、後から当アプリで再編集可能）
+  const handleSaveDraft = async () => {
+    if (!pdfBytes) return
+
+    const hasRotations =
+      Object.keys(pageRotations).length > 0 &&
+      Object.values(pageRotations).some((r) => r !== 0)
+    const hasBookmarks = bookmarks.length > 0
+
+    if (
+      redactions.length === 0 &&
+      drawings.length === 0 &&
+      !hasRotations &&
+      !hasBookmarks
+    ) {
+      showToast('⚠️ 墨消し、描画、ページ回転、またはしおりの編集を行ってから一時保存してください。')
+      return
+    }
+
+    setIsProcessing(true)
+    try {
+      const draftBytes = await saveEditablePdf(
+        pdfBytes,
+        redactions,
+        colorMode,
+        drawings,
+        pageRotations,
+        bookmarks,
+        rulerScale
+      )
+
+      const blob = new Blob([draftBytes as BlobPart], { type: 'application/pdf' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const baseName = fileName ? fileName.replace(/(_一時保存\(再編集可\))?\.pdf$/i, '') : 'document'
+      a.download = `${baseName}_一時保存(再編集可).pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      showToast(
+        '💾 一時保存（再編集可）PDFを保存しました！通常のビューアでも閲覧でき、当アプリで再度開くとすべての要素を再編集できます。'
+      )
+    } catch (err) {
+      console.error('一時保存エラー:', err)
+      alert('一時保存PDFの生成中にエラーが発生しました。')
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // PDF軽量化（コンパクト保存 / 作業データ反映）テキスト選択100%維持
+  const handleCompactPdf = async (
+    level: CompactLevel,
+    action: 'apply' | 'download'
+  ): Promise<{ originalSize: number; compactedSize: number; optimizedImagesCount: number } | null> => {
+    if (!pdfBytes) return null
+    setIsProcessing(true)
+    try {
+      if (action === 'apply') {
+        const res = await compactPdf(pdfBytes, level)
+        setPdfBytes(res.bytes)
+        const newInfo = await getPdfInfo(res.bytes, pageRotations)
+        setDocInfo(newInfo)
+        const mainUrl = await renderPageImage(
+          res.bytes,
+          currentPage,
+          1.5,
+          pageRotations[currentPage] || 0
+        )
+        setPageImages((prev) => {
+          revokeUrlMap(prev)
+          return new Map([[currentPage, mainUrl]])
+        })
+        const savedPct =
+          res.compactedSize < res.originalSize
+            ? Math.round(((res.originalSize - res.compactedSize) / res.originalSize) * 100)
+            : 0
+        showToast(
+          `📦 作業データを軽量化しました！（▲${savedPct}% 削減 ／ テキスト選択100%維持）`
+        )
+        return {
+          originalSize: res.originalSize,
+          compactedSize: res.compactedSize,
+          optimizedImagesCount: res.optimizedImagesCount,
+        }
+      } else {
+        const hasRotations =
+          Object.keys(pageRotations).length > 0 &&
+          Object.values(pageRotations).some((r) => r !== 0)
+        const hasEdits =
+          redactions.length > 0 ||
+          drawings.length > 0 ||
+          hasRotations ||
+          bookmarks.length > 0
+
+        const sourceBytes = hasEdits
+          ? await applyRedactions(
+              pdfBytes,
+              redactions,
+              colorMode,
+              drawings,
+              pageRotations,
+              bookmarks
+            )
+          : pdfBytes
+
+        const res = await compactPdf(sourceBytes, level)
+        const blob = new Blob([res.bytes as BlobPart], { type: 'application/pdf' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        const baseName = fileName ? fileName.replace(/\.pdf$/i, '') : 'document'
+        a.download = `${baseName}_軽量化.pdf`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+
+        const origSize = pdfBytes.byteLength
+        const savedPct =
+          res.compactedSize < origSize
+            ? Math.round(((origSize - res.compactedSize) / origSize) * 100)
+            : 0
+        showToast(
+          `📦 軽量化PDFを保存しました！（▲${savedPct}% 削減 ／ テキスト選択100%維持）`
+        )
+        return {
+          originalSize: origSize,
+          compactedSize: res.compactedSize,
+          optimizedImagesCount: res.optimizedImagesCount,
+        }
+      }
+    } catch (err) {
+      console.error('PDF軽量化エラー:', err)
+      alert('PDFの軽量化処理中にエラーが発生しました。')
+      return null
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
   // 任意のPDFバイト列をブラウザのネイティブ印刷ダイアログで直接印刷するヘルパー
   const triggerPdfPrint = (targetPdfBytes: Uint8Array) => {
     const blob = new Blob([targetPdfBytes as BlobPart], { type: 'application/pdf' })
@@ -1276,6 +1445,7 @@ export default function App() {
       {/* ヘッダー */}
       <Header
         fileName={fileName}
+        fileSize={pdfBytes?.byteLength ?? null}
         totalRedactions={redactions.length}
         totalDrawings={drawings.length}
         isProcessing={isProcessing}
@@ -1284,6 +1454,8 @@ export default function App() {
         hubSignature={docInfo?.hubSignature}
         onUploadClick={() => fileInputRef.current?.click()}
         onSaveClick={handleSave}
+        onSaveDraftClick={handleSaveDraft}
+        onCompactClick={handleCompactPdf}
         onPrintClick={handlePrint}
         onResetClick={handleReset}
         onToggleDesk={() => setIsDeskOpen((prev) => !prev)}

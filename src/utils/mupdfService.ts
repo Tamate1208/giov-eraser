@@ -79,10 +79,32 @@ export interface HubSignatureInfo {
   version: string;
 }
 
+export interface EditableDraftState {
+  version: string;
+  savedAt: string;
+  colorMode: 'black' | 'white';
+  rulerScale: number;
+  redactions: RedactRect[];
+  drawings: DrawingItem[];
+  pageRotations: Record<number, number>;
+  bookmarks: BookmarkItem[];
+  originalPageRotations?: Record<number, number>;
+}
+
+export type CompactLevel = 'standard' | 'high' | 'lossless';
+
+export interface CompactPdfResult {
+  bytes: Uint8Array;
+  originalSize: number;
+  compactedSize: number;
+  optimizedImagesCount: number;
+}
+
 export interface PdfDocumentInfo {
   numPages: number;
   pages: PdfPageInfo[];
   hubSignature?: HubSignatureInfo | null;
+  isEditableDraft?: boolean;
 }
 
 /**
@@ -159,6 +181,13 @@ export async function getPdfInfo(
   const numPages = doc.countPages();
   const pages: PdfPageInfo[] = [];
   const hubSignature = readHubSignature(doc);
+  let isEditableDraft = false;
+  try {
+    const gvDraft = doc.getTrailer()?.get('Root')?.get('GV_Draft');
+    if (gvDraft && !gvDraft.isNull()) {
+      isEditableDraft = true;
+    }
+  } catch {}
 
   for (let i = 0; i < numPages; i++) {
     const page = doc.loadPage(i);
@@ -189,7 +218,7 @@ export async function getPdfInfo(
   }
   doc.destroy();
 
-  return { numPages, pages, hubSignature };
+  return { numPages, pages, hubSignature, isEditableDraft };
 }
 
 /**
@@ -534,6 +563,7 @@ function buildOutlinesDict(doc: any, bookmarks: BookmarkItem[]): any {
 /**
  * 完全不可逆墨消し（Redaction）および描画・校正オブジェクトの合成実行
  * ページ回転・しおりツリーの更新も統合してクリーンPDFを生成する
+ * options.isDraft === true の場合は物理切除を行わず、再編集可能なプレビュー層＋/GV_Draft メタデータを埋め込む
  */
 export async function applyRedactions(
   pdfBytes: Uint8Array,
@@ -541,11 +571,14 @@ export async function applyRedactions(
   defaultColor: 'black' | 'white' = 'black',
   drawings: DrawingItem[] = [],
   pageRotations: Record<number, number> = {},
-  bookmarks: BookmarkItem[] = []
+  bookmarks: BookmarkItem[] = [],
+  options?: { isDraft?: boolean; rulerScale?: number }
 ): Promise<Uint8Array> {
+  const isDraft = !!options?.isDraft;
   const m = await getMuPdf();
   const doc = m.Document.openDocument(pdfBytes, 'application/pdf');
   const numPages = doc.countPages();
+  const originalPageRotations: Record<number, number> = {};
 
   const redactPageMap = new Map<number, RedactRect[]>();
   for (const r of redactions) {
@@ -572,18 +605,23 @@ export async function applyRedactions(
     const page = doc.loadPage(i);
     const pageObj = page.getObject();
 
-    // ページの回転を適用
+    // ページの回転を適用（可逆保存用に元の回転角を記録）
+    let baseRot = 0;
+    try {
+      const rotObj = pageObj.get('Rotate');
+      if (rotObj && !rotObj.isNull()) baseRot = rotObj.asNumber() || 0;
+    } catch {}
+    originalPageRotations[i] = baseRot;
+
     if (hasRotation) {
-      let baseRot = 0;
-      try {
-        const rotObj = pageObj.get('Rotate');
-        if (rotObj && !rotObj.isNull()) baseRot = rotObj.asNumber() || 0;
-      } catch {}
       const finalRot = (((baseRot + pageRotations[i]) % 360) + 360) % 360;
       pageObj.put('Rotate', doc.newInteger(finalRot));
     }
 
-    if (rectList.length === 0 && drawList.length === 0) continue;
+    if (rectList.length === 0 && drawList.length === 0) {
+      page.destroy();
+      continue;
+    }
     const bounds = page.getBounds();
 
     // 画面座標 (左上原点) から PDF 座標 (左下原点) への変換ヘルパー
@@ -591,7 +629,8 @@ export async function applyRedactions(
     const toPdfY = (y: number) => bounds[3] - y;
 
     // 1. 墨消し物理切除（テキスト・画像ストリームの不可逆物理削除）
-    if (rectList.length > 0) {
+    // ※ 一時保存（isDraft: true）の場合は物理切除を行わず、原稿データを100%無傷で保持する
+    if (!isDraft && rectList.length > 0) {
       for (const r of rectList) {
         const annot = page.createAnnotation('Redact');
         annot.setRect([r.x0, r.y0, r.x1, r.y1]);
@@ -786,6 +825,9 @@ export async function applyRedactions(
         annot.setColor(rgb);
         annot.setDefaultAppearance('Heiti', fontPx, rgb);
         annot.update();
+        if (isDraft) {
+          annot.getObject().put('GV_Draft', doc.newBoolean(true));
+        }
 
         // テキスト回転の適用
         if (rotDeg !== 0) {
@@ -845,7 +887,10 @@ export async function applyRedactions(
             if (u8Bytes) {
               const img = new m.Image(u8Bytes);
               const imgObj = doc.addImage(img);
-              const imgName = `ImG_${i}_${imgIndex++}`;
+              img.destroy();
+              const imgName = isDraft
+                ? `ImG_Draft_${i}_${imgIndex++}`
+                : `ImG_${i}_${imgIndex++}`;
 
               let res = pageObj.get('Resources');
               if (!res || res.isNull()) {
@@ -914,11 +959,20 @@ export async function applyRedactions(
       }
 
       const streamDict = doc.newDictionary();
+      if (isDraft) {
+        streamDict.put('GV_Draft', doc.newBoolean(true));
+      }
       const streamObj = doc.addStream(new TextEncoder().encode(stream), streamDict);
 
       const contents = pageObj.get('Contents');
       if (!contents || contents.isNull()) {
-        pageObj.put('Contents', streamObj);
+        if (isDraft) {
+          const arr = doc.newArray();
+          arr.push(streamObj);
+          pageObj.put('Contents', arr);
+        } else {
+          pageObj.put('Contents', streamObj);
+        }
       } else if (contents.isArray()) {
         contents.push(streamObj);
       } else {
@@ -928,6 +982,7 @@ export async function applyRedactions(
         pageObj.put('Contents', arr);
       }
     }
+    page.destroy();
   }
 
   // 5. 編集されたしおりツリーをPDFの /Root/Outlines に反映
@@ -944,16 +999,319 @@ export async function applyRedactions(
     }
   }
 
+  // 一時保存（再編集可）モードの場合は /Root/GV_Draft に編集ステート一式を圧縮ストリームとして格納
+  if (isDraft) {
+    try {
+      const serializableDrawings: DrawingItem[] = drawings.map((d) => {
+        if (d.tool === 'image' && d.imageBytes) {
+          let binary = '';
+          const len = d.imageBytes.byteLength;
+          for (let k = 0; k < len; k++) {
+            binary += String.fromCharCode(d.imageBytes[k]);
+          }
+          const dataUrl = `data:${d.imageMime || 'image/png'};base64,${btoa(binary)}`;
+          const { imageBytes, ...rest } = d;
+          return { ...rest, imageUrl: dataUrl };
+        }
+        return d;
+      });
+
+      const draftState: EditableDraftState = {
+        version: '1.0',
+        savedAt: new Date().toISOString(),
+        colorMode: defaultColor,
+        rulerScale: options?.rulerScale || 100,
+        redactions,
+        drawings: serializableDrawings,
+        pageRotations,
+        bookmarks,
+        originalPageRotations,
+      };
+      const jsonBytes = new TextEncoder().encode(JSON.stringify(draftState));
+      const draftStream = doc.addStream(jsonBytes, doc.newDictionary());
+      const root = doc.getTrailer()?.get('Root');
+      if (root && !root.isNull()) {
+        root.put('GV_Draft', draftStream);
+      }
+    } catch (err) {
+      console.error('Failed to embed GV_Draft state:', err);
+    }
+  } else {
+    // 確定保存時はもし過去の /GV_Draft が残っていれば消去
+    try {
+      doc.getTrailer()?.get('Root')?.delete('GV_Draft');
+    } catch {}
+  }
+
   // 6. ステルス出力記録の刻印（外見・印刷・マウス選択には一切現れない内部辞書署名）
   const opParts: string[] = [];
+  if (isDraft) opParts.push('一時保存(再編集可)');
   if (redactions.length > 0) opParts.push(`墨消し${redactions.length}箇所`);
   if (drawings.length > 0) opParts.push(`校正描画${drawings.length}件`);
   if (Object.values(pageRotations).some((r) => r !== 0)) opParts.push('ページ回転');
   if (bookmarks.length > 0) opParts.push('しおり編集');
   stampHubSignature(doc, opParts.length > 0 ? opParts.join('・') : 'PDF出力');
 
-  // クリーンなPDFとして保存 (不要オブジェクト・切り取られたストリームの完全ガベージコレクション)
-  const cleanDocBytes = toSafeUint8Array(doc.saveToBuffer('clean,garbage'));
+  // 保存: 一時保存時は Contents 配列を結合しないよう clean を外し garbage=4,compress で保存
+  const saveOpts = isDraft ? 'garbage=4,compress' : 'clean,garbage=4,compress';
+  const cleanDocBytes = toSafeUint8Array(doc.saveToBuffer(saveOpts));
   doc.destroy();
   return cleanDocBytes;
+}
+
+/**
+ * 可逆性を持たせた「一時保存（再編集可）PDF」を生成するラッパー
+ */
+export async function saveEditablePdf(
+  pdfBytes: Uint8Array,
+  redactions: RedactRect[],
+  defaultColor: 'black' | 'white' = 'black',
+  drawings: DrawingItem[] = [],
+  pageRotations: Record<number, number> = {},
+  bookmarks: BookmarkItem[] = [],
+  rulerScale: number = 100
+): Promise<Uint8Array> {
+  return applyRedactions(
+    pdfBytes,
+    redactions,
+    defaultColor,
+    drawings,
+    pageRotations,
+    bookmarks,
+    { isDraft: true, rulerScale }
+  );
+}
+
+/**
+ * PDF読み込み時に「一時保存（再編集可）データ (/GV_Draft)」が含まれているか検査し、
+ * 含まれている場合はプレビュー層を取り除いた無傷のベースPDFと編集ステート一式を復元する
+ */
+export async function extractEditableState(
+  pdfBytes: Uint8Array
+): Promise<{ cleanPdfBytes: Uint8Array; state: EditableDraftState } | null> {
+  const m = await getMuPdf();
+  const doc = m.Document.openDocument(pdfBytes, 'application/pdf');
+  try {
+    const root = doc.getTrailer()?.get('Root');
+    const gvDraft = root?.get('GV_Draft');
+    if (!gvDraft || gvDraft.isNull()) {
+      doc.destroy();
+      return null;
+    }
+
+    const streamBuf = gvDraft.readStream();
+    const jsonBytes = toSafeUint8Array(streamBuf);
+    const state: EditableDraftState = JSON.parse(new TextDecoder().decode(jsonBytes));
+
+    // 画像アイテムの dataUrl から Uint8Array (imageBytes) を復元
+    if (state.drawings && Array.isArray(state.drawings)) {
+      state.drawings = state.drawings.map((d) => {
+        if (d.tool === 'image' && d.imageUrl && d.imageUrl.startsWith('data:')) {
+          try {
+            const base64Part = d.imageUrl.split(',')[1];
+            const bin = atob(base64Part);
+            const u8 = new Uint8Array(bin.length);
+            for (let k = 0; k < bin.length; k++) {
+              u8[k] = bin.charCodeAt(k);
+            }
+            return { ...d, imageBytes: u8 };
+          } catch {}
+        }
+        return d;
+      });
+    }
+
+    // /Root から /GV_Draft を除去
+    root.delete('GV_Draft');
+
+    // 各ページからプレビュー用の Contents ストリーム・FreeText 注釈・一時回転・画像XObjectを除去して無傷の原稿に戻す
+    const numPages = doc.countPages();
+    for (let i = 0; i < numPages; i++) {
+      const page = doc.loadPage(i);
+      const pageObj = page.getObject();
+
+      // 1. 元のページ回転角に復元
+      if (
+        state.originalPageRotations &&
+        typeof state.originalPageRotations[i] === 'number'
+      ) {
+        pageObj.put('Rotate', doc.newInteger(state.originalPageRotations[i]));
+      }
+
+      // 2. Contents 配列から GV_Draft ストリームを除去
+      const contents = pageObj.get('Contents');
+      if (contents && !contents.isNull()) {
+        if (contents.isArray()) {
+          const cleanArr = doc.newArray();
+          for (let cIdx = 0; cIdx < contents.length; cIdx++) {
+            const item = contents.get(cIdx);
+            const isDraftStream = item?.resolve()?.get('GV_Draft')?.asBoolean();
+            if (!isDraftStream) {
+              cleanArr.push(item);
+            }
+          }
+          if (cleanArr.length > 0) {
+            pageObj.put('Contents', cleanArr);
+          } else {
+            pageObj.delete('Contents');
+          }
+        } else if (contents.resolve()?.get('GV_Draft')?.asBoolean()) {
+          pageObj.delete('Contents');
+        }
+      }
+
+      // 3. Annots 配列から GV_Draft 注釈を除去
+      const annots = pageObj.get('Annots');
+      if (annots && !annots.isNull() && annots.isArray()) {
+        const cleanAnnots = doc.newArray();
+        for (let aIdx = 0; aIdx < annots.length; aIdx++) {
+          const a = annots.get(aIdx);
+          const isDraftAnnot = a?.resolve()?.get('GV_Draft')?.asBoolean();
+          if (!isDraftAnnot) {
+            cleanAnnots.push(a);
+          }
+        }
+        if (cleanAnnots.length > 0) {
+          pageObj.put('Annots', cleanAnnots);
+        } else {
+          pageObj.delete('Annots');
+        }
+      }
+
+      // 4. Resources.XObject から一時画像 ImG_Draft_* を除去
+      const xobjs = pageObj.get('Resources')?.get('XObject');
+      if (xobjs && !xobjs.isNull()) {
+        for (let k = 0; k < 50; k++) {
+          const key = `ImG_Draft_${i}_${k}`;
+          if (xobjs.get(key) && !xobjs.get(key).isNull()) {
+            xobjs.delete(key);
+          }
+        }
+      }
+
+      page.destroy();
+    }
+
+    const cleanPdfBytes = toSafeUint8Array(doc.saveToBuffer('garbage=4,compress'));
+    doc.destroy();
+    return { cleanPdfBytes, state };
+  } catch (err) {
+    console.error('extractEditableState error:', err);
+    try {
+      doc.destroy();
+    } catch {}
+    return null;
+  }
+}
+
+/**
+ * テキスト選択・ベクター図面・OCR構造を100%維持したまま、
+ * PDF内部の埋め込み画像（XObject /Image）と不要ストリームのみをピンポイント圧縮して軽量化する
+ */
+export async function compactPdf(
+  pdfBytes: Uint8Array,
+  level: CompactLevel = 'standard'
+): Promise<CompactPdfResult> {
+  const originalSize = pdfBytes.byteLength;
+  const m = await getMuPdf();
+  const doc = m.Document.openDocument(pdfBytes, 'application/pdf');
+  let optimizedImagesCount = 0;
+
+  if (level !== 'lossless') {
+    const maxDim = level === 'high' ? 1200 : 1600;
+    const jpegQuality = level === 'high' ? 55 : 75;
+    const count = doc.countObjects();
+
+    for (let i = 1; i < count; i++) {
+      try {
+        const ref = doc.newIndirect(i, 0);
+        if (!ref || !ref.isStream || !ref.isStream()) continue;
+        const subtype = ref.get('Subtype')?.asName();
+        if (subtype !== 'Image') continue;
+
+        const w = ref.get('Width')?.asNumber() || 0;
+        const h = ref.get('Height')?.asNumber() || 0;
+        const bpc = ref.get('BitsPerComponent')?.asNumber() || 8;
+
+        // 1bit白黒図面スキャンやマスク付き透過画像、極小アイコンは画質・透過保護のためスキップ
+        if (w < 64 || h < 64 || bpc === 1) continue;
+        if (ref.get('ImageMask')?.asBoolean() === true) continue;
+        const smask = ref.get('SMask');
+        const mask = ref.get('Mask');
+        if ((smask && !smask.isNull()) || (mask && !mask.isNull())) continue;
+
+        const rawBuf = ref.readRawStream();
+        const rawLen = rawBuf.asUint8Array().byteLength;
+        rawBuf.destroy();
+
+        // すでに8KB未満の軽量画像なら再圧縮不要
+        if (rawLen < 8192) continue;
+
+        const mImg = doc.loadImage(ref);
+        let mPix = mImg.toPixmap();
+        mImg.destroy();
+
+        if (mPix.getNumberOfComponents() !== 3 || mPix.getAlpha()) {
+          const rgbPix = mPix.convertToColorSpace(m.ColorSpace.DeviceRGB, false);
+          mPix.destroy();
+          mPix = rgbPix;
+        }
+
+        let targetW = w;
+        let targetH = h;
+        if (Math.max(w, h) > maxDim) {
+          const scale = maxDim / Math.max(w, h);
+          targetW = Math.max(1, Math.round(w * scale));
+          targetH = Math.max(1, Math.round(h * scale));
+          const warped = mPix.warp([0, 0, w, 0, 0, h, w, h], targetW, targetH);
+          mPix.destroy();
+          mPix = warped;
+        }
+
+        const jpgBytes = new Uint8Array(mPix.asJPEG(jpegQuality, false));
+        mPix.destroy();
+
+        // 元ストリームより確実に（8%以上）小さくなる場合のみ差し替える（逆肥大化を100%防止）
+        if (jpgBytes.byteLength < rawLen * 0.92) {
+          ref.put('Width', doc.newInteger(targetW));
+          ref.put('Height', doc.newInteger(targetH));
+          ref.put('ColorSpace', doc.newName('DeviceRGB'));
+          ref.put('BitsPerComponent', doc.newInteger(8));
+          ref.put('Filter', doc.newName('DCTDecode'));
+          ref.delete('DecodeParms');
+          ref.delete('Decode');
+          ref.delete('ColorTransform');
+          ref.writeRawStream(jpgBytes);
+          optimizedImagesCount++;
+        }
+      } catch (imgErr) {
+        // 個別画像の変換失敗時は安全にスキップして元の画像を維持
+        console.warn('Image compact skip on obj', i, imgErr);
+      }
+    }
+  }
+
+  const label =
+    level === 'lossless'
+      ? 'PDF軽量化(ロスレス)'
+      : level === 'high'
+      ? 'PDF軽量化(高圧縮)'
+      : 'PDF軽量化(標準)';
+  stampHubSignature(doc, label);
+
+  // もし一時保存の /GV_Draft が入っている場合は Contents 配列が結合されないよう clean を省く
+  const hasDraft = !!(doc.getTrailer()?.get('Root')?.get('GV_Draft') && !doc.getTrailer()?.get('Root')?.get('GV_Draft').isNull());
+  const saveFlags = hasDraft
+    ? 'garbage=4,compress,compress-fonts,compress-images'
+    : 'clean,garbage=4,compress,compress-fonts,compress-images';
+
+  const compactedBytes = toSafeUint8Array(doc.saveToBuffer(saveFlags));
+  doc.destroy();
+
+  return {
+    bytes: compactedBytes,
+    originalSize,
+    compactedSize: compactedBytes.byteLength,
+    optimizedImagesCount,
+  };
 }
