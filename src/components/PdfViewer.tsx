@@ -7,8 +7,99 @@ import {
   ArrowHead,
   DrawingItem,
   Point,
+  RulerMeasureMode,
 } from '../types/drawing'
-import { X, Eraser, Check, CornerDownLeft, Trash2, Move, Ruler, ArrowRight, RotateCw } from 'lucide-react'
+import {
+  X,
+  Eraser,
+  Check,
+  CornerDownLeft,
+  Trash2,
+  Move,
+  Ruler,
+  ArrowRight,
+  RotateCw,
+  Square,
+  Type,
+} from 'lucide-react'
+
+// 多角形の面積 (pt^2) を計算 (Shoelace formula)
+function calculatePolygonAreaPt(points: { x: number; y: number }[]): number {
+  if (points.length < 3) return 0
+  let area = 0
+  for (let i = 0; i < points.length; i++) {
+    const j = (i + 1) % points.length
+    area += points[i].x * points[j].y
+    area -= points[j].x * points[i].y
+  }
+  return Math.abs(area) / 2
+}
+
+// 多角形の外周長 (pt) を計算
+function calculatePolygonPerimeterPt(points: { x: number; y: number }[]): number {
+  if (points.length < 2) return 0
+  let perimeter = 0
+  for (let i = 0; i < points.length; i++) {
+    const j = (i + 1) % points.length
+    perimeter += Math.hypot(points[j].x - points[i].x, points[j].y - points[i].y)
+  }
+  return perimeter
+}
+
+// 多角形の重心 (Center of mass)
+function calculatePolygonCentroid(points: { x: number; y: number }[]): Point {
+  if (points.length === 0) return { x: 0, y: 0 }
+  let sumX = 0
+  let sumY = 0
+  for (const p of points) {
+    sumX += p.x
+    sumY += p.y
+  }
+  return { x: sumX / points.length, y: sumY / points.length }
+}
+
+// 距離のフォーマット（用紙mmと縮尺scaleから現地実長文字列を生成）
+function formatRealDistance(distMm: number, scale: number): { realStr: string; sheetStr: string } {
+  const sheetStr = `${distMm.toFixed(1)} mm`
+  if (scale === 1) {
+    return { realStr: sheetStr, sheetStr }
+  }
+  const realMm = distMm * scale
+  if (scale <= 50) {
+    return { realStr: `${realMm.toFixed(1)} mm`, sheetStr }
+  }
+  const realM = realMm / 1000
+  return { realStr: `${realM.toFixed(2)} m`, sheetStr }
+}
+
+// 面積のフォーマット（用紙mm2と縮尺scaleから現地面積文字列を生成）
+function formatRealArea(
+  areaMm2: number,
+  perimeterMm: number,
+  scale: number
+): {
+  realAreaStr: string;
+  sheetAreaStr: string;
+  realPerimeterStr: string;
+} {
+  const sheetAreaStr = `${areaMm2.toFixed(1)} mm²`
+  if (scale === 1) {
+    return {
+      realAreaStr: sheetAreaStr,
+      sheetAreaStr,
+      realPerimeterStr: `${perimeterMm.toFixed(1)} mm`,
+    }
+  }
+  const realMm2 = areaMm2 * scale * scale
+  const realM2 = realMm2 / 1_000_000
+  const realPerimeterM = (perimeterMm * scale) / 1000
+
+  const tsubo = (realM2 * 0.3025).toFixed(1)
+  const realAreaStr = `${realM2.toFixed(2)} m² (${tsubo}坪)`
+  const realPerimeterStr = `${realPerimeterM.toFixed(2)} m`
+
+  return { realAreaStr, sheetAreaStr, realPerimeterStr }
+}
 
 // 角度・スナップ計算ヘルパー (Shiftキー押下時: 水平・垂直・45度ロック、正方形・真円ロック)
 function applyShiftSnap(
@@ -105,6 +196,9 @@ interface PdfViewerProps {
   arrowHead: ArrowHead;
   checkSize: number;
   drawings: DrawingItem[];
+  // 物差し・縮尺設定
+  rulerScale?: number;
+  rulerMeasureMode?: RulerMeasureMode;
   // ハンドラ
   onAddRedaction: (rect: Omit<RedactRect, 'id'>) => void;
   onRemoveRedaction: (id: string) => void;
@@ -128,6 +222,8 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   arrowHead,
   checkSize,
   drawings,
+  rulerScale = 100,
+  rulerMeasureMode = 'distance',
   onAddRedaction,
   onRemoveRedaction,
   onAddDrawing,
@@ -155,16 +251,30 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   const moveStartPointerRef = useRef<{ x: number; y: number } | null>(null)
   const moveItemSnapshotRef = useRef<DrawingItem | null>(null)
 
-  // 物差し（寸法計測）確定時のバッジ表示用 state
-  const [rulerResult, setRulerResult] = useState<{
-    x1: number
-    y1: number
-    x2: number
-    y2: number
-    distMm: number
-    distPx: number
-    angleDeg: number
-  } | null>(null)
+  // 物差し（寸法・面積計測）確定時のバッジ表示用 state
+  interface RulerResultData {
+    type: 'distance' | 'area'
+    scale: number
+    // 距離用
+    x1?: number
+    y1?: number
+    x2?: number
+    y2?: number
+    distMm?: number
+    distPx?: number
+    angleDeg?: number
+    realLengthStr?: string
+    // 面積用
+    points?: Point[]
+    areaMm2?: number
+    realAreaStr?: string
+    realPerimeterStr?: string
+    center?: Point
+  }
+  const [rulerResult, setRulerResult] = useState<RulerResultData | null>(null)
+
+  // 物差しの面積計測用多角形頂点リスト
+  const [rulerAreaPoints, setRulerAreaPoints] = useState<Point[]>([])
 
   // 多角形描画用の頂点リスト
   const [polygonPoints, setPolygonPoints] = useState<Point[]>([])
@@ -548,50 +658,149 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         setSelectedDrawingId(null)
         setRulerResult(null)
         setSnapGuide(null)
+        setRulerAreaPoints([])
+      } else if (e.key === 'Enter') {
+        if (
+          appMode === 'draw' &&
+          activeTool === 'ruler' &&
+          rulerMeasureMode === 'area' &&
+          rulerAreaPoints.length >= 3
+        ) {
+          e.preventDefault()
+          handleFinishRulerArea()
+        }
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedDrawingId, textInput, onRemoveDrawing])
+  }, [
+    selectedDrawingId,
+    textInput,
+    onRemoveDrawing,
+    appMode,
+    activeTool,
+    rulerMeasureMode,
+    rulerAreaPoints,
+    pageInfo,
+    rulerScale,
+  ])
 
-  // 物差しの計測結果を図面に寸法線＋テキストとして書き残す
+  // 物差しの面積計測の確定
+  const handleFinishRulerArea = () => {
+    if (rulerAreaPoints.length < 3 || !pageInfo) {
+      setRulerAreaPoints([])
+      return
+    }
+
+    const ptsPt = rulerAreaPoints.map((p) => ({ x: p.x / 1.5, y: p.y / 1.5 }))
+    const areaPt2 = calculatePolygonAreaPt(ptsPt)
+    const perimPt = calculatePolygonPerimeterPt(ptsPt)
+
+    const mmPerPt = 25.4 / 72
+    const areaMm2 = areaPt2 * mmPerPt * mmPerPt
+    const perimMm = perimPt * mmPerPt
+
+    const { realAreaStr, sheetAreaStr, realPerimeterStr } = formatRealArea(
+      areaMm2,
+      perimMm,
+      rulerScale
+    )
+    const center = calculatePolygonCentroid(rulerAreaPoints)
+
+    setRulerResult({
+      type: 'area',
+      scale: rulerScale,
+      points: [...rulerAreaPoints],
+      areaMm2: Math.round(areaMm2 * 10) / 10,
+      realAreaStr,
+      realPerimeterStr,
+      center,
+    })
+
+    setRulerAreaPoints([])
+  }
+
+  // 物差しの計測結果（距離または面積）を図面に寸法線・注記として書き残す
   const handleBakeRulerToDrawing = () => {
     if (!rulerResult || !pageInfo) return
 
-    // 1. 両端矢印の寸法線を追加
-    onAddDrawing({
-      pageIndex: pageInfo.index,
-      tool: 'line',
-      color: '#10b981',
-      lineWidth: 2,
-      fontSize: 12,
-      fillMode: 'none',
-      arrowHead: 'both',
-      points: [
-        { x: rulerResult.x1 / 1.5, y: rulerResult.y1 / 1.5 },
-        { x: rulerResult.x2 / 1.5, y: rulerResult.y2 / 1.5 },
-      ],
-    })
+    if (rulerResult.type === 'distance') {
+      const { x1 = 0, y1 = 0, x2 = 0, y2 = 0, realLengthStr, distMm = 0, angleDeg = 0 } = rulerResult
 
-    // 2. 寸法テキストを追加（中央に白背景付き・線に平行な角度）
-    const midX = (rulerResult.x1 + rulerResult.x2) / 2 / 1.5
-    const midY = (rulerResult.y1 + rulerResult.y2) / 2 / 1.5
-    let textRot = rulerResult.angleDeg
-    if (textRot > 90 && textRot <= 270) textRot -= 180
+      // 1. 両端矢印の寸法線を追加
+      onAddDrawing({
+        pageIndex: pageInfo.index,
+        tool: 'line',
+        color: '#10b981',
+        lineWidth: 2,
+        fontSize: 12,
+        fillMode: 'none',
+        arrowHead: 'both',
+        points: [
+          { x: x1 / 1.5, y: y1 / 1.5 },
+          { x: x2 / 1.5, y: y2 / 1.5 },
+        ],
+      })
 
-    onAddDrawing({
-      pageIndex: pageInfo.index,
-      tool: 'text',
-      color: '#10b981',
-      fillMode: 'none',
-      lineWidth: 1,
-      fontSize: 12,
-      text: `${rulerResult.distMm} mm`,
-      bgWhite: true,
-      rotation: textRot,
-      x: midX - 25,
-      y: midY - 6,
-    })
+      // 2. 寸法テキストを追加（中央に白背景付き・線に平行な角度）
+      const midX = (x1 + x2) / 2 / 1.5
+      const midY = (y1 + y2) / 2 / 1.5
+      let textRot = angleDeg
+      if (textRot > 90 && textRot <= 270) textRot -= 180
+
+      const textLabel =
+        rulerScale > 1
+          ? `${realLengthStr} (1:${rulerScale})`
+          : `${distMm.toFixed(1)} mm`
+
+      onAddDrawing({
+        pageIndex: pageInfo.index,
+        tool: 'text',
+        color: '#10b981',
+        fillMode: 'none',
+        lineWidth: 1,
+        fontSize: 12,
+        text: textLabel,
+        bgWhite: true,
+        rotation: textRot,
+        x: midX - 30,
+        y: midY - 6,
+      })
+    } else if (rulerResult.type === 'area' && rulerResult.points) {
+      const { points, realAreaStr, realPerimeterStr, center } = rulerResult
+
+      // 1. 多角形枠（半透明グリーン塗り）を追加
+      onAddDrawing({
+        pageIndex: pageInfo.index,
+        tool: 'polygon',
+        color: '#10b981',
+        fillMode: 'semi',
+        lineWidth: 2,
+        fontSize: 12,
+        points: points.map((p) => ({ x: p.x / 1.5, y: p.y / 1.5 })),
+      })
+
+      // 2. 重心に面積テキストラベルを注記
+      const c = center || { x: 0, y: 0 }
+      const textLabel =
+        rulerScale > 1
+          ? `S=${realAreaStr} (L=${realPerimeterStr} / 1:${rulerScale})`
+          : `S=${realAreaStr}`
+
+      onAddDrawing({
+        pageIndex: pageInfo.index,
+        tool: 'text',
+        color: '#047857',
+        fillMode: 'none',
+        lineWidth: 1,
+        fontSize: 12,
+        text: textLabel,
+        bgWhite: true,
+        rotation: 0,
+        x: c.x / 1.5 - 40,
+        y: c.y / 1.5 - 8,
+      })
+    }
 
     setRulerResult(null)
   }
@@ -675,9 +884,24 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       return
     }
 
-    // 描画モード: 物差し（前回の計測結果をクリアして新規計測開始）
+    // 描画モード: 物差し
     if (appMode === 'draw' && activeTool === 'ruler') {
-      setRulerResult(null)
+      if (rulerMeasureMode === 'area') {
+        // 始点クリックで閉じる判定 (15px以内)
+        if (rulerAreaPoints.length >= 3) {
+          const start = rulerAreaPoints[0]
+          const dist = Math.hypot(relX - start.x, relY - start.y)
+          if (dist <= 15) {
+            handleFinishRulerArea()
+            return
+          }
+        }
+        setRulerAreaPoints((prev) => [...prev, { x: relX, y: relY }])
+        return
+      } else {
+        // 距離計測: 前回の計測結果をクリア
+        setRulerResult(null)
+      }
     }
 
     // 描画モード: テキスト
@@ -852,7 +1076,11 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         let angleDeg = Math.round((Math.atan2(dyPx, dxPx) * 180) / Math.PI)
         if (angleDeg < 0) angleDeg += 360
 
+        const { realStr } = formatRealDistance(distMm, rulerScale)
+
         setRulerResult({
+          type: 'distance',
+          scale: rulerScale,
           x1: start.x,
           y1: start.y,
           x2: endX,
@@ -860,6 +1088,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
           distMm: Math.round(distMm * 10) / 10,
           distPx: Math.round(distPx),
           angleDeg,
+          realLengthStr: realStr,
         })
         return
       }
@@ -1599,6 +1828,45 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
               </g>
             )}
 
+            {/* 物差し面積計測中のリアルタイムガイド線 */}
+            {appMode === 'draw' &&
+              activeTool === 'ruler' &&
+              rulerMeasureMode === 'area' &&
+              rulerAreaPoints.length > 0 && (
+                <g>
+                  <polygon
+                    points={rulerAreaPoints.map((p) => `${p.x},${p.y}`).join(' ')}
+                    fill="#10b981"
+                    fillOpacity={0.15}
+                    stroke="#10b981"
+                    strokeWidth={2}
+                    strokeDasharray="4 4"
+                  />
+                  {mousePos && (
+                    <line
+                      x1={rulerAreaPoints[rulerAreaPoints.length - 1].x}
+                      y1={rulerAreaPoints[rulerAreaPoints.length - 1].y}
+                      x2={mousePos.x}
+                      y2={mousePos.y}
+                      stroke="#10b981"
+                      strokeWidth={2}
+                      strokeDasharray="2 2"
+                    />
+                  )}
+                  {rulerAreaPoints.map((p, idx) => (
+                    <circle
+                      key={idx}
+                      cx={p.x}
+                      cy={p.y}
+                      r={idx === 0 ? 6 : 4}
+                      fill={idx === 0 ? '#10b981' : '#34d399'}
+                      stroke="#ffffff"
+                      strokeWidth="1.5"
+                    />
+                  ))}
+                </g>
+              )}
+
             {/* ドラッグ中のプレビュー描画（矢印、直線、矩形、丸、物差し） */}
             {dragPreview && appMode === 'draw' && (
               <g style={{ color: drawColor }}>
@@ -1722,28 +1990,38 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       <circle cx={x2} cy={y2} r="3" fill="#10b981" />
 
                       <g transform={`translate(${midX}, ${midY - 14})`}>
-                        <rect
-                          x="-55"
-                          y="-11"
-                          width="110"
-                          height="22"
-                          rx="4"
-                          fill="#0f172a"
-                          stroke="#10b981"
-                          strokeWidth="1.5"
-                          className="shadow-lg"
-                        />
-                        <text
-                          x="0"
-                          y="4"
-                          fill="#34d399"
-                          fontSize="11"
-                          fontWeight="bold"
-                          textAnchor="middle"
-                          fontFamily="ui-monospace, monospace"
-                        >
-                          {distMm} mm ({Math.round(len)}px)
-                        </text>
+                        {(() => {
+                          const distMmNum = parseFloat(distMm)
+                          const { realStr } = formatRealDistance(distMmNum, rulerScale)
+                          const label =
+                            rulerScale > 1 ? `${realStr} (用紙${distMm}mm)` : `${distMm} mm`
+                          return (
+                            <>
+                              <rect
+                                x="-70"
+                                y="-11"
+                                width="140"
+                                height="22"
+                                rx="4"
+                                fill="#0f172a"
+                                stroke="#10b981"
+                                strokeWidth="1.5"
+                                className="shadow-lg"
+                              />
+                              <text
+                                x="0"
+                                y="4"
+                                fill="#34d399"
+                                fontSize="11"
+                                fontWeight="bold"
+                                textAnchor="middle"
+                                fontFamily="ui-monospace, monospace"
+                              >
+                                {label}
+                              </text>
+                            </>
+                          )
+                        })()}
                       </g>
                     </g>
                   )
@@ -1751,69 +2029,94 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
               </g>
             )}
 
-            {/* 確定した物差しの寸法線表示 */}
+            {/* 確定した物差しの寸法線または面積枠表示 */}
             {rulerResult && (() => {
-              const { x1, y1, x2, y2 } = rulerResult
-              const dx = x2 - x1
-              const dy = y2 - y1
-              const len = Math.hypot(dx, dy)
-              if (len < 2) return null
+              if (rulerResult.type === 'distance') {
+                const { x1 = 0, y1 = 0, x2 = 0, y2 = 0 } = rulerResult
+                const dx = x2 - x1
+                const dy = y2 - y1
+                const len = Math.hypot(dx, dy)
+                if (len < 2) return null
 
-              const barLen = 16
-              const nx = (-dy / len) * (barLen / 2)
-              const ny = (dx / len) * (barLen / 2)
+                const barLen = 16
+                const nx = (-dy / len) * (barLen / 2)
+                const ny = (dx / len) * (barLen / 2)
+                const arrowPath = getArrowHeadPath(x1, y1, x2, y2, 2, 'both')
 
-              const arrowPath = getArrowHeadPath(x1, y1, x2, y2, 2, 'both')
-
-              return (
-                <g className="pointer-events-auto">
-                  <line
-                    x1={x1}
-                    y1={y1}
-                    x2={x2}
-                    y2={y2}
-                    stroke="#10b981"
-                    strokeWidth="6"
-                    strokeOpacity="0.25"
-                  />
-                  <line
-                    x1={x1}
-                    y1={y1}
-                    x2={x2}
-                    y2={y2}
-                    stroke="#10b981"
-                    strokeWidth="2"
-                  />
-                  <line
-                    x1={x1 - nx}
-                    y1={y1 - ny}
-                    x2={x1 + nx}
-                    y2={y1 + ny}
-                    stroke="#10b981"
-                    strokeWidth="2.5"
-                  />
-                  <line
-                    x1={x2 - nx}
-                    y1={y2 - ny}
-                    x2={x2 + nx}
-                    y2={y2 + ny}
-                    stroke="#10b981"
-                    strokeWidth="2.5"
-                  />
-                  {arrowPath && (
-                    <path
-                      d={arrowPath}
+                return (
+                  <g className="pointer-events-auto">
+                    <line
+                      x1={x1}
+                      y1={y1}
+                      x2={x2}
+                      y2={y2}
+                      stroke="#10b981"
+                      strokeWidth="6"
+                      strokeOpacity="0.25"
+                    />
+                    <line
+                      x1={x1}
+                      y1={y1}
+                      x2={x2}
+                      y2={y2}
                       stroke="#10b981"
                       strokeWidth="2"
-                      fill="none"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
                     />
-                  )}
-                  <circle cx={x1} cy={y1} r="3" fill="#10b981" />
-                  <circle cx={x2} cy={y2} r="3" fill="#10b981" />
-                </g>
-              )
+                    <line
+                      x1={x1 - nx}
+                      y1={y1 - ny}
+                      x2={x1 + nx}
+                      y2={y1 + ny}
+                      stroke="#10b981"
+                      strokeWidth="2.5"
+                    />
+                    <line
+                      x1={x2 - nx}
+                      y1={y2 - ny}
+                      x2={x2 + nx}
+                      y2={y2 + ny}
+                      stroke="#10b981"
+                      strokeWidth="2.5"
+                    />
+                    {arrowPath && (
+                      <path
+                        d={arrowPath}
+                        stroke="#10b981"
+                        strokeWidth="2"
+                        fill="none"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    )}
+                    <circle cx={x1} cy={y1} r="3" fill="#10b981" />
+                    <circle cx={x2} cy={y2} r="3" fill="#10b981" />
+                  </g>
+                )
+              } else if (rulerResult.type === 'area' && rulerResult.points) {
+                return (
+                  <g className="pointer-events-auto">
+                    <polygon
+                      points={rulerResult.points.map((p) => `${p.x},${p.y}`).join(' ')}
+                      fill="#10b981"
+                      fillOpacity={0.25}
+                      stroke="#10b981"
+                      strokeWidth={2.5}
+                    />
+                    {rulerResult.points.map((p, idx) => (
+                      <circle
+                        key={idx}
+                        cx={p.x}
+                        cy={p.y}
+                        r="4"
+                        fill="#10b981"
+                        stroke="#ffffff"
+                        strokeWidth="1.5"
+                      />
+                    ))}
+                  </g>
+                )
+              }
+              return null
             })()}
 
             {/* 線への吸着ガイド表示（スマートマグネット） */}
@@ -1914,58 +2217,95 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
           </div>
 
           {/* 物差し確定時の計測結果・図面反映ポップアップバッジ */}
-          {rulerResult && (
-            <div
-              style={{
-                left: `${(rulerResult.x1 + rulerResult.x2) / 2}px`,
-                top: `${(rulerResult.y1 + rulerResult.y2) / 2}px`,
-                transform: 'translate(-50%, -120%)',
-              }}
-              onClick={(e) => e.stopPropagation()}
-              className="absolute z-30 bg-slate-900/95 border-2 border-emerald-500 rounded-xl px-3 py-2 shadow-2xl flex items-center gap-3 backdrop-blur-md animate-fade-in ring-2 ring-emerald-500/20"
-            >
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-400">
-                  <Ruler className="w-4 h-4" />
+          {rulerResult && (() => {
+            const pos =
+              rulerResult.type === 'distance'
+                ? {
+                    left: `${((rulerResult.x1 ?? 0) + (rulerResult.x2 ?? 0)) / 2}px`,
+                    top: `${((rulerResult.y1 ?? 0) + (rulerResult.y2 ?? 0)) / 2}px`,
+                  }
+                : {
+                    left: `${rulerResult.center?.x ?? 0}px`,
+                    top: `${rulerResult.center?.y ?? 0}px`,
+                  }
+
+            return (
+              <div
+                style={{
+                  ...pos,
+                  transform: 'translate(-50%, -120%)',
+                }}
+                onClick={(e) => e.stopPropagation()}
+                className="absolute z-30 bg-slate-900/95 border-2 border-emerald-500 rounded-xl px-3 py-2 shadow-2xl flex items-center gap-3 backdrop-blur-md animate-fade-in ring-2 ring-emerald-500/20 max-w-sm"
+              >
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                    {rulerResult.type === 'distance' ? (
+                      <Ruler className="w-4 h-4" />
+                    ) : (
+                      <Square className="w-4 h-4" />
+                    )}
+                  </div>
+                  <div>
+                    {rulerResult.type === 'distance' ? (
+                      <>
+                        <div className="flex items-baseline gap-1.5">
+                          <span className="text-sm font-bold text-emerald-300 font-mono tracking-tight">
+                            {rulerResult.realLengthStr}
+                          </span>
+                          {rulerResult.scale > 1 && (
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              (用紙 {rulerResult.distMm?.toFixed(1)} mm)
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono">
+                          縮尺 1:{rulerResult.scale} ｜ 角度: {rulerResult.angleDeg}°
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-baseline gap-1.5">
+                          <span className="text-sm font-bold text-emerald-300 font-mono tracking-tight">
+                            {rulerResult.realAreaStr}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono">
+                          周長: {rulerResult.realPerimeterStr} ｜ 縮尺 1:{rulerResult.scale}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-sm font-bold text-emerald-300 font-mono tracking-tight">
-                      {rulerResult.distMm.toFixed(1)} mm
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-mono">
-                      ({rulerResult.distPx} px)
-                    </span>
-                  </div>
-                  <div className="text-[10px] text-slate-400 font-mono">
-                    角度: {rulerResult.angleDeg}°
-                  </div>
+
+                <div className="h-8 w-[1px] bg-slate-700 shrink-0" />
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    onClick={handleBakeRulerToDrawing}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1 text-[11px] shadow-sm transition transform active:scale-95 cursor-pointer"
+                    title={
+                      rulerResult.type === 'distance'
+                        ? 'この寸法線と数値を校正描画として図面に書き残します'
+                        : 'この面積枠と平米数ラベルを校正描画として図面に書き残します'
+                    }
+                  >
+                    <ArrowRight className="w-3 h-3" />
+                    図面に残す
+                  </button>
+                  <button
+                    onClick={() => setRulerResult(null)}
+                    className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
+                    title="計測バッジを閉じる"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
+            )
+          })()}
 
-              <div className="h-7 w-[1px] bg-slate-700" />
-
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={handleBakeRulerToDrawing}
-                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1 text-[11px] shadow-sm transition transform active:scale-95 cursor-pointer"
-                  title="この寸法線と数値を校正描画として図面に書き残します"
-                >
-                  <ArrowRight className="w-3 h-3" />
-                  図面に残す
-                </button>
-                <button
-                  onClick={() => setRulerResult(null)}
-                  className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
-                  title="計測バッジを閉じる"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* テキスト入力ポップアップ */}
+          {/* テキスト入力ポップアップ (白基調・高コントラストUI) */}
           {textInput && (
             <div
               style={{
@@ -1973,11 +2313,14 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 top: `${textInput.y}px`,
               }}
               onClick={(e) => e.stopPropagation()}
-              className="absolute z-30 bg-slate-900 border border-slate-700 p-2.5 rounded-xl shadow-2xl flex flex-col gap-2 min-w-[240px] animate-fade-in ring-1 ring-white/10"
+              className="absolute z-30 bg-white border border-slate-300 p-3 rounded-xl shadow-2xl flex flex-col gap-2.5 min-w-[280px] animate-fade-in ring-4 ring-black/10"
             >
-              <div className="text-[11px] font-bold text-slate-300 flex items-center justify-between">
-                <span>テキスト・修正文字の入力</span>
-                <span className="text-slate-500 text-[10px]">({fontSize}pt)</span>
+              <div className="text-xs font-bold text-slate-800 flex items-center justify-between border-b border-slate-100 pb-1.5">
+                <span className="flex items-center gap-1.5">
+                  <Type className="w-3.5 h-3.5 text-blue-600" />
+                  <span>文字・校正テキストの入力</span>
+                </span>
+                <span className="text-slate-400 text-[11px] font-mono">({fontSize}pt)</span>
               </div>
               <input
                 autoFocus
@@ -1993,20 +2336,20 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     setTextInput(null)
                   }
                 }}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+                className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 focus:outline-none font-medium transition"
                 style={{ color: drawColor }}
               />
-              <div className="flex items-center justify-between text-[11px] text-slate-400">
-                <label className="flex items-center gap-1.5 cursor-pointer">
+              <div className="flex items-center justify-between text-xs text-slate-600 pt-0.5">
+                <label className="flex items-center gap-1.5 cursor-pointer hover:text-slate-900 transition">
                   <input
                     type="checkbox"
                     checked={textInput.bgWhite}
                     onChange={(e) =>
                       setTextInput({ ...textInput, bgWhite: e.target.checked })
                     }
-                    className="rounded bg-slate-800 border-slate-700 text-blue-600 focus:ring-0"
+                    className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                   />
-                  <span>背景を白で隠す</span>
+                  <span className="text-[11px] font-medium">背景を白で隠す</span>
                 </label>
                 <div className="flex items-center gap-1.5">
                   <button
@@ -2017,21 +2360,21 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                         rotation: ((textInput.rotation || 0) + 90) % 360,
                       })
                     }
-                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] flex items-center gap-1 cursor-pointer transition border border-slate-700"
+                    className="px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-200"
                     title="テキストを90度回転"
                   >
-                    <RotateCw className="w-3 h-3 text-emerald-400" />
+                    <RotateCw className="w-3 h-3 text-emerald-600" />
                     <span>{textInput.rotation || 0}°</span>
                   </button>
                   <button
                     onClick={() => setTextInput(null)}
-                    className="px-2 py-0.5 rounded text-slate-400 hover:text-white cursor-pointer"
+                    className="px-2 py-1 rounded-md text-slate-500 hover:text-slate-800 text-[11px] font-medium hover:bg-slate-100 transition cursor-pointer"
                   >
                     取消
                   </button>
                   <button
                     onClick={handleConfirmText}
-                    className="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold flex items-center gap-1 text-[11px] shadow-sm cursor-pointer"
+                    className="px-3 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1 text-[11px] shadow-sm transition active:scale-95 cursor-pointer"
                   >
                     <CornerDownLeft className="w-3 h-3" />
                     決定

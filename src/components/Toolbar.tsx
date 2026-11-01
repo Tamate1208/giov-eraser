@@ -22,7 +22,7 @@ import {
   MousePointer,
   Ruler,
 } from 'lucide-react'
-import { AppMode, DrawingTool, FillMode, ArrowHead } from '../types/drawing'
+import { AppMode, DrawingTool, FillMode, ArrowHead, RulerMeasureMode } from '../types/drawing'
 
 interface ToolbarProps {
   currentPage: number;
@@ -46,6 +46,11 @@ interface ToolbarProps {
   pageDrawingCount: number;
   totalDrawingCount: number;
   canUndo: boolean;
+  // 物差し・縮尺設定
+  rulerScale: number;
+  onRulerScaleChange: (scale: number) => void;
+  rulerMeasureMode: RulerMeasureMode;
+  onRulerMeasureModeChange: (mode: RulerMeasureMode) => void;
   // ハンドラ
   onPageChange: (newPage: number) => void;
   onZoomChange: (newZoom: number) => void;
@@ -96,6 +101,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   pageDrawingCount,
   totalDrawingCount,
   canUndo,
+  rulerScale,
+  onRulerScaleChange,
+  rulerMeasureMode,
+  onRulerMeasureModeChange,
   onPageChange,
   onZoomChange,
   onColorModeChange,
@@ -219,7 +228,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             }`}
           >
             <Eraser className="w-4 h-4" />
-            <span>🧹 墨消し（不可逆切除）</span>
+            <span>🧹 墨消し（不可逆マスク）</span>
           </button>
           <button
             onClick={() => onAppModeChange('draw')}
@@ -515,9 +524,89 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               <span>選択移動モード：配置済みオブジェクトをクリックして選択し、ドラッグで位置を微調整できます（Deleteキーで削除）</span>
             </div>
           ) : activeTool === 'ruler' ? (
-            <div className="flex items-center gap-2 border-l border-slate-800 pl-3 text-emerald-300 font-medium animate-fade-in text-xs">
-              <Ruler className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-              <span>物差しモード：図面上の2点間をドラッグして正確な実寸(mm)・ピクセル・角度を計測（Shiftキーで水平垂直ロック）</span>
+            <div className="flex items-center gap-3 border-l border-slate-800 pl-3 animate-fade-in text-xs">
+              {/* 計測モード切替 [距離] ⇄ [面積] */}
+              <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800 shadow-inner">
+                <button
+                  type="button"
+                  onClick={() => onRulerMeasureModeChange('distance')}
+                  className={`px-2.5 py-1 rounded text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                    rulerMeasureMode === 'distance'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="2点間の直線距離を計測"
+                >
+                  <Ruler className="w-3.5 h-3.5" />
+                  <span>距離計測</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onRulerMeasureModeChange('area')}
+                  className={`px-2.5 py-1 rounded text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                    rulerMeasureMode === 'area'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="多角形で囲んだ領域の面積（平米数）と外周長を計測"
+                >
+                  <Square className="w-3.5 h-3.5" />
+                  <span>面積計測 (多角形)</span>
+                </button>
+              </div>
+
+              {/* 縮尺選択セレクタ */}
+              <div className="flex items-center gap-1.5 bg-slate-900/90 px-2 py-1 rounded-lg border border-slate-700 shadow-sm">
+                <span className="text-slate-400 font-semibold text-[11px]">縮尺:</span>
+                <select
+                  value={[1, 10, 20, 50, 100, 200, 250, 300, 500, 1000, 2500].includes(rulerScale) ? rulerScale : 'custom'}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    if (val === 'custom') {
+                      if ([1, 10, 20, 50, 100, 200, 250, 300, 500, 1000, 2500].includes(rulerScale)) {
+                        onRulerScaleChange(150)
+                      }
+                    } else {
+                      onRulerScaleChange(Number(val))
+                    }
+                  }}
+                  className="bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-emerald-300 font-mono text-[11px] font-bold focus:outline-none focus:border-emerald-500 cursor-pointer"
+                >
+                  <option value={1}>1:1 (原寸実ミリ)</option>
+                  <option value={10}>1:10</option>
+                  <option value={20}>1:20</option>
+                  <option value={50}>1:50</option>
+                  <option value={100}>1:100 (標準図面)</option>
+                  <option value={200}>1:200</option>
+                  <option value={250}>1:250</option>
+                  <option value={300}>1:300</option>
+                  <option value={500}>1:500</option>
+                  <option value={1000}>1:1000</option>
+                  <option value={2500}>1:2500</option>
+                  <option value="custom">カスタム比率...</option>
+                </select>
+
+                {![1, 10, 20, 50, 100, 200, 250, 300, 500, 1000, 2500].includes(rulerScale) && (
+                  <div className="flex items-center gap-1 text-[11px] font-mono text-emerald-300">
+                    <span>1:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={10000}
+                      value={rulerScale}
+                      onChange={(e) => onRulerScaleChange(Math.max(1, Number(e.target.value) || 1))}
+                      className="w-14 bg-slate-950 border border-slate-700 rounded px-1 py-0.5 text-center text-emerald-300 text-[11px] font-bold focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* 操作ガイド */}
+              <span className="text-emerald-300/90 font-medium text-[11px] hidden xl:inline">
+                {rulerMeasureMode === 'distance'
+                  ? '💡 図面上の2点間をドラッグして実寸計測（Shiftキーで水平垂直ロック）'
+                  : '💡 頂点を順次クリックして区画を囲み、始点クリックまたはEnterで面積確定'}
+              </span>
             </div>
           ) : activeTool === 'draw_eraser' ? (
             <div className="flex items-center gap-2 border-l border-slate-800 pl-3 text-rose-300 font-medium animate-fade-in text-xs">

@@ -24,6 +24,7 @@ import {
   DrawingItem,
   HistoryAction,
   BookmarkItem,
+  RulerMeasureMode,
 } from './types/drawing'
 import {
   FileUp,
@@ -65,6 +66,10 @@ export default function App() {
   const [arrowHead, setArrowHead] = useState<ArrowHead>('end')
   const [checkSize, setCheckSize] = useState<number>(14)
   const [drawings, setDrawings] = useState<DrawingItem[]>([])
+
+  // 物差しの縮尺 (1:100 が図面標準) と計測モード ('distance' | 'area')
+  const [rulerScale, setRulerScale] = useState<number>(100)
+  const [rulerMeasureMode, setRulerMeasureMode] = useState<RulerMeasureMode>('distance')
 
   // 操作履歴 (Undo 用)
   const [history, setHistory] = useState<HistoryAction[]>([])
@@ -890,6 +895,10 @@ export default function App() {
             onFillModeChange={setFillMode}
             onArrowHeadChange={setArrowHead}
             onCheckSizeChange={setCheckSize}
+            rulerScale={rulerScale}
+            onRulerScaleChange={setRulerScale}
+            rulerMeasureMode={rulerMeasureMode}
+            onRulerMeasureModeChange={setRulerMeasureMode}
             onUndo={handleUndo}
           />
 
@@ -933,6 +942,8 @@ export default function App() {
               arrowHead={arrowHead}
               checkSize={checkSize}
               drawings={currentPageDrawings}
+              rulerScale={rulerScale}
+              rulerMeasureMode={rulerMeasureMode}
               onAddRedaction={handleAddRedaction}
               onRemoveRedaction={handleRemoveRedaction}
               onAddDrawing={handleAddDrawing}
@@ -955,7 +966,7 @@ export default function App() {
               PDF書類・図面を開いて墨消しを開始
             </h2>
             <p className="text-sm text-slate-400 text-center mb-8 max-w-lg">
-              指定箇所のテキストやオブジェクトをPDF内部から物理切除。消去箇所以外のテキスト選択やOCR適性を100%保持した安全な電子ファイルを生成します。
+              指定箇所のテキストやオブジェクトをPDF内部から不可逆マスク。消去箇所以外のテキスト選択やOCR適性を100%保持した安全な電子ファイルを生成します。
             </p>
 
             {/* ドロップゾーン */}
@@ -1004,7 +1015,7 @@ export default function App() {
                 <Eraser className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
                 <div>
                   <div className="font-semibold text-slate-200 mb-0.5">完全不可逆・真のRedaction</div>
-                  <div>指定領域のテキスト・画像を内部から物理切除。単なる目隠しや注釈マスキングと異なり、テキスト選択やコピペによる復元は一切不可能です。</div>
+                  <div>指定領域のテキスト・画像を内部から不可逆マスク。単なる目隠しや注釈マスキングと異なり、テキスト選択やコピペによる復元は一切不可能です。</div>
                 </div>
               </div>
 
@@ -1038,7 +1049,7 @@ export default function App() {
             <p className="text-sm font-medium text-rose-400 mb-4 min-h-[1.5rem]">
               {isLoadingPdf
                 ? '端末内部のWebAssemblyエンジンで安全に展開中...'
-                : '指定箇所のテキストを物理切除し、他テキストのOCR構造を保持中...'}
+                : '指定箇所のテキストを不可逆マスクし、他テキストのOCR構造を保持中...'}
             </p>
 
             {/* パルスプログレスバー */}

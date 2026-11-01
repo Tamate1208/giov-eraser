@@ -1,5 +1,7 @@
 export type AppMode = 'eraser' | 'draw'
 
+export type RulerMeasureMode = 'distance' | 'area'
+
 export type DrawingTool =
   | 'select'
   | 'text'
