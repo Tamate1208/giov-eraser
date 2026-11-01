@@ -94,11 +94,35 @@ function formatRealArea(
   const realM2 = realMm2 / 1_000_000
   const realPerimeterM = (perimeterMm * scale) / 1000
 
-  const tsubo = (realM2 * 0.3025).toFixed(1)
-  const realAreaStr = `${realM2.toFixed(2)} m² (${tsubo}坪)`
+  const realAreaStr = `${realM2.toFixed(2)} m²`
   const realPerimeterStr = `${realPerimeterM.toFixed(2)} m`
 
   return { realAreaStr, sheetAreaStr, realPerimeterStr }
+}
+
+// テキストの描画幅を文字種（全角・半角）に応じて高精度に算出するヘルパー
+function estimateTextWidth(text: string, fontPx: number): number {
+  if (!text) return 10
+  let width = 0
+  for (const ch of text) {
+    const code = ch.charCodeAt(0)
+    // 半角文字 (ASCII, 半角カタカナ等)
+    if (code <= 0x007f || (code >= 0xff61 && code <= 0xff9f)) {
+      if (ch === ' ' || ch === '.' || ch === ',' || ch === ':' || ch === ';' || ch === '!' || ch === 'l' || ch === 'i') {
+        width += fontPx * 0.32
+      } else if (ch >= '0' && ch <= '9') {
+        width += fontPx * 0.58
+      } else if (ch >= 'A' && ch <= 'Z') {
+        width += fontPx * 0.65
+      } else {
+        width += fontPx * 0.52
+      }
+    } else {
+      // 全角文字 (漢字・ひらがな・カタカナ・全角記号等)
+      width += fontPx * 0.98
+    }
+  }
+  return Math.ceil(width) + 6 // 左右にわずか3pxずつの余白
 }
 
 // 角度・スナップ計算ヘルパー (Shiftキー押下時: 水平・垂直・45度ロック、正方形・真円ロック)
@@ -593,7 +617,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     const tx = (item.x ?? 0) * 1.5
     const ty = (item.y ?? 0) * 1.5
     const fontPx = item.fontSize * 1.5
-    const estW = (item.text?.length || 4) * fontPx * 0.95 + 8
+    const estW = estimateTextWidth(item.text || '', fontPx)
     // テキストの中心座標
     const cx = tx + estW / 2
     const cy = ty - fontPx / 2
@@ -697,7 +721,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       } else if (snap.tool === 'text') {
         // テキストの移動 ＋ 直線への平行・中点吸着（スマートマグネット）
         const fontPx = (snap.fontSize || 16) * 1.5
-        const estW = (snap.text?.length || 4) * fontPx * 0.95 + 8
+        const estW = estimateTextWidth(snap.text || '', fontPx)
 
         let curX = Math.round(((snap.x ?? 0) + deltaX) * 10) / 10
         let curY = Math.round(((snap.y ?? 0) + deltaY) * 10) / 10
@@ -1088,11 +1112,9 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         })
       }
 
-      // 重心に面積テキストラベルを注記
+      // 重心に面積テキストラベルを注記（『A=』のみ）
       const c = center || { x: 0, y: 0 }
-      const textLabel = realPerimeterStr
-        ? `S=${realAreaStr} (L=${realPerimeterStr})`
-        : `S=${realAreaStr}`
+      const textLabel = `A=${realAreaStr}`
 
       onAddDrawing({
         pageIndex: pageInfo.index,
@@ -2184,7 +2206,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 const tx = item.x * 1.5
                 const ty = item.y * 1.5
                 const fontPx = item.fontSize * 1.5
-                const estW = item.text.length * fontPx * 0.95 + 8
+                const estW = estimateTextWidth(item.text, fontPx)
                 const cx = tx + estW / 2
                 const cy = ty - fontPx / 2
                 const rot = item.rotation || 0
@@ -2213,10 +2235,10 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     </title>
                     {item.bgWhite && (
                       <rect
-                        x={tx - 4}
+                        x={tx - 3}
                         y={ty - fontPx + 2}
                         width={estW}
-                        height={fontPx + 6}
+                        height={fontPx + 4}
                         fill="#ffffff"
                         rx="2"
                         className="shadow-sm"
@@ -2224,10 +2246,10 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     )}
                     {isSelected && !isEraserMode && (
                       <rect
-                        x={tx - 6}
+                        x={tx - 4}
                         y={ty - fontPx}
-                        width={estW + 4}
-                        height={fontPx + 10}
+                        width={estW + 2}
+                        height={fontPx + 8}
                         fill="none"
                         stroke="#38bdf8"
                         strokeWidth="2"
@@ -2237,10 +2259,10 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     )}
                     {isEraserMode && isHovered && (
                       <rect
-                        x={tx - 6}
+                        x={tx - 4}
                         y={ty - fontPx}
-                        width={estW + 4}
-                        height={fontPx + 10}
+                        width={estW + 2}
+                        height={fontPx + 8}
                         fill="none"
                         stroke="#ef4444"
                         strokeWidth="2.5"
@@ -2285,7 +2307,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     {/* 選択時のクイック90°回転ボタン（右横） */}
                     {isSelected && !isEraserMode && (
                       <g
-                        transform={`translate(${tx + estW + 12}, ${ty - fontPx / 2})`}
+                        transform={`translate(${tx + estW + 10}, ${ty - fontPx / 2})`}
                         onClick={(e) => {
                           e.stopPropagation()
                           const nextRot = ((item.rotation || 0) + 90) % 360
@@ -2303,7 +2325,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     {/* 選択時のテキスト編集ボタン（✏️ 編集） */}
                     {isSelected && !isEraserMode && (
                       <g
-                        transform={`translate(${tx + estW + 34}, ${ty - fontPx / 2})`}
+                        transform={`translate(${tx + estW + 30}, ${ty - fontPx / 2})`}
                         onClick={(e) => handleStartEditText(item, e)}
                         className="cursor-pointer hover:scale-125 transition transform"
                       >
@@ -2804,14 +2826,9 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       <>
                         <div className="flex items-baseline gap-1.5">
                           <span className="text-sm font-bold text-emerald-300 font-mono tracking-tight">
-                            {rulerResult.realAreaStr}
+                            A = {rulerResult.realAreaStr}
                           </span>
                         </div>
-                        {rulerResult.realPerimeterStr && (
-                          <div className="text-[10px] text-slate-400 font-mono">
-                            周長: {rulerResult.realPerimeterStr}
-                          </div>
-                        )}
                       </>
                     )}
                   </div>
