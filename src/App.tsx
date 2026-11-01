@@ -1264,16 +1264,16 @@ export default function App() {
         <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8 bg-slate-950 text-slate-100 overflow-y-auto relative">
           <div className="max-w-2xl w-full flex flex-col items-center">
             {/* タイトルバッジ (Cals-Viewerスタイル) */}
-            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-rose-950/50 border border-rose-500/40 text-rose-300 text-xs font-semibold mb-4 shadow-sm">
-              <ShieldCheck className="w-4 h-4 text-rose-400" />
-              <span>GioV PDF Eraser (完全ローカル・スタンドアロン版)</span>
+            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-blue-950/50 border border-blue-500/40 text-blue-300 text-xs font-semibold mb-4 shadow-sm">
+              <ShieldCheck className="w-4 h-4 text-blue-400" />
+              <span>GioV PDF Hub (完全ローカル・スタンドアロン版)</span>
             </div>
 
             <h2 className="text-2xl sm:text-3xl font-extrabold text-white text-center mb-2 tracking-tight">
-              PDF書類・図面を開いて墨消しを開始
+              PDF書類・図面を開いて作業を開始
             </h2>
             <p className="text-sm text-slate-400 text-center mb-8 max-w-lg">
-              指定箇所のテキストやオブジェクトをPDF内部から不可逆マスク。消去箇所以外のテキスト選択やOCR適性を100%保持した安全な電子ファイルを生成します。
+              不可逆墨消し、朱書き校正、高精度寸法計測、画像挿入、そして複数PDFを束ねる作業机まで、すべて外部サーバー通信なし・端末内完結で処理します。
             </p>
 
             {/* ドロップゾーン */}

@@ -38,29 +38,29 @@ export const Header: React.FC<HeaderProps> = ({
     <header className="border-b border-slate-800 bg-slate-900/90 backdrop-blur-md px-6 py-3.5 flex items-center justify-between sticky top-0 z-30 shadow-md">
       {/* ロゴとアプリ名 */}
       <div className="flex items-center gap-3.5">
-        <div className="p-2.5 bg-gradient-to-br from-rose-500 to-pink-600 rounded-xl text-white shadow-lg shadow-rose-500/25 ring-1 ring-white/20">
-          <Eraser className="w-6 h-6 animate-pulse" />
+        <div className="p-2.5 bg-gradient-to-br from-blue-600 via-indigo-600 to-rose-500 rounded-xl text-white shadow-lg shadow-blue-500/25 ring-1 ring-white/20">
+          <Layers className="w-6 h-6 animate-pulse" />
         </div>
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-              GioV PDF Eraser
+              GioV PDF Hub
             </h1>
             <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 shadow-sm">
               <ShieldCheck className="w-3.5 h-3.5" />
               完全不可逆・真のRedaction
             </span>
-            <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
-              OCR・他テキスト完全保持
+            <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30">
+              校正・計測・編纂デスク統合
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
             {fileName ? (
-              <span className="text-rose-300 font-medium truncate inline-block max-w-[360px]">
+              <span className="text-blue-300 font-medium truncate inline-block max-w-[360px]">
                 {fileName}
               </span>
             ) : (
-              'PDF内部のテキスト・画像を物理削除し、消去場所以外のテキスト選択・OCR適性を100%維持'
+              '墨消し・校正描画・寸法計測・資料編纂を完全ローカル完結で統合した高機能PDFワークスペース'
             )}
           </p>
         </div>

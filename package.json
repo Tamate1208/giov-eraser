@@ -1,11 +1,11 @@
 {
-  "name": "giov-eraser",
+  "name": "giov-pdf-hub",
   "private": true,
   "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && cp dist/index.html GioV_PDF_Eraser.html && cp dist/index.html ../GioV_PDF_Eraser.html",
+    "build": "tsc -b && vite build && cp dist/index.html GioV_PDF_Hub.html && cp dist/index.html ../GioV_PDF_Hub.html",
     "preview": "vite preview"
   },
   "dependencies": {
