@@ -22,6 +22,7 @@ import {
   MousePointer,
   Ruler,
   Hand,
+  Image as ImageIcon,
 } from 'lucide-react'
 import { AppMode, DrawingTool, FillMode, ArrowHead, RulerMeasureMode } from '../types/drawing'
 
@@ -70,6 +71,7 @@ interface ToolbarProps {
   onFillModeChange: (mode: FillMode) => void;
   onArrowHeadChange: (head: ArrowHead) => void;
   onCheckSizeChange: (size: number) => void;
+  onInsertImage?: (file: File) => void;
   onUndo: () => void;
 }
 
@@ -124,8 +126,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onFillModeChange,
   onArrowHeadChange,
   onCheckSizeChange,
+  onInsertImage,
   onUndo,
 }) => {
+  const imageFileInputRef = React.useRef<HTMLInputElement>(null)
   const [keyword, setKeyword] = useState('')
   const [isSearching, setIsSearching] = useState(false)
 
@@ -449,6 +453,30 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             >
               <Type className="w-3.5 h-3.5" />
               文字
+            </button>
+
+            {/* 隠し画像ファイル選択入力 */}
+            <input
+              ref={imageFileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/svg+xml"
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files && e.target.files[0] && onInsertImage) {
+                  onInsertImage(e.target.files[0])
+                  e.target.value = ''
+                }
+              }}
+            />
+            <button
+              onClick={() => {
+                imageFileInputRef.current?.click()
+              }}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition cursor-pointer text-slate-300 hover:text-white hover:bg-slate-800"
+              title="写真・電子印鑑・スタンプ・ロゴ画像を挿入"
+            >
+              <ImageIcon className="w-3.5 h-3.5 text-emerald-400" />
+              画像
             </button>
             <button
               onClick={() => onToolChange('line')}

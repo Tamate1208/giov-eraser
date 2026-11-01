@@ -356,6 +356,16 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   const rotateStartAngleRef = useRef<number>(0)
   const rotateInitialAngleRef = useRef<number>(0)
 
+  // 画像リサイズ用の state
+  const [resizingImageId, setResizingImageId] = useState<string | null>(null)
+  const resizeImageStartRef = useRef<{
+    startX: number
+    startY: number
+    initW: number
+    initH: number
+    aspectRatio: number
+  } | null>(null)
+
   // 線への吸着ガイド表示用 state
   const [snapGuide, setSnapGuide] = useState<{
     x1: number
@@ -690,6 +700,48 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       window.removeEventListener('pointerup', handleGlobalRotateUp)
     }
   }, [rotatingDrawingId, zoom, onUpdateDrawing])
+
+  // 画像リサイズの開始ハンドラ
+  const handleImageResizeStart = (item: DrawingItem, e: React.PointerEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    setResizingImageId(item.id)
+    const initW = item.w || 100
+    const initH = item.h || 100
+    resizeImageStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      initW,
+      initH,
+      aspectRatio: initW / initH,
+    }
+  }
+
+  // 画像リサイズドラッグ中のグローバル追従
+  useEffect(() => {
+    if (!resizingImageId) return
+
+    const handleGlobalResizeMove = (e: PointerEvent) => {
+      if (!resizeImageStartRef.current) return
+      const { startX, initW, initH, aspectRatio } = resizeImageStartRef.current
+      const deltaX = (e.clientX - startX) / zoom / 1.5
+      const newW = Math.max(20, initW + deltaX)
+      const newH = Math.max(20, newW / (aspectRatio || 1))
+      onUpdateDrawing?.(resizingImageId, { w: Math.round(newW), h: Math.round(newH) }, false)
+    }
+
+    const handleGlobalResizeUp = () => {
+      setResizingImageId(null)
+      resizeImageStartRef.current = null
+    }
+
+    window.addEventListener('pointermove', handleGlobalResizeMove)
+    window.addEventListener('pointerup', handleGlobalResizeUp)
+    return () => {
+      window.removeEventListener('pointermove', handleGlobalResizeMove)
+      window.removeEventListener('pointerup', handleGlobalResizeUp)
+    }
+  }, [resizingImageId, zoom, onUpdateDrawing])
 
   // オブジェクトドラッグ移動中のグローバルポインター追従と確定（線への吸着付き）
   useEffect(() => {
@@ -2387,6 +2439,205 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                         <line x1="-3.5" y1="-3.5" x2="3.5" y2="3.5" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
                         <line x1="3.5" y1="-3.5" x2="-3.5" y2="3.5" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
                       </g>
+                    )}
+                  </g>
+                )
+              }
+
+              if (item.tool === 'image') {
+                if (
+                  item.x === undefined ||
+                  item.y === undefined ||
+                  item.w === undefined ||
+                  item.h === undefined ||
+                  !item.imageUrl
+                )
+                  return null
+                const tx = item.x * 1.5
+                const ty = item.y * 1.5
+                const tw = item.w * 1.5
+                const th = item.h * 1.5
+                const cx = tx + tw / 2
+                const cy = ty + th / 2
+                const rot = item.rotation || 0
+
+                return (
+                  <g
+                    key={item.id}
+                    transform={rot ? `rotate(${rot}, ${cx}, ${cy})` : undefined}
+                    className={`pointer-events-auto group ${
+                      isEraserMode
+                        ? 'cursor-pointer hover:opacity-60'
+                        : activeTool === 'select' || isSelected
+                        ? 'cursor-move'
+                        : 'cursor-pointer'
+                    }`}
+                    onPointerDown={(e) => handleItemPointerDown(item, e)}
+                    onClick={(e) => handleItemClick(item, e)}
+                    onMouseEnter={() => setHoveredDrawingId(item.id)}
+                    onMouseLeave={() => setHoveredDrawingId(null)}
+                  >
+                    <title>
+                      {isEraserMode
+                        ? 'クリックして削除'
+                        : '画像（ドラッグで移動・右下ハンドルでリサイズ）'}
+                    </title>
+
+                    {/* 画像本体 */}
+                    <image
+                      href={item.imageUrl}
+                      x={tx}
+                      y={ty}
+                      width={tw}
+                      height={th}
+                      preserveAspectRatio="none"
+                      className="select-none pointer-events-auto shadow-sm"
+                    />
+
+                    {/* 選択中のバウンディングボックス */}
+                    {isSelected && !isEraserMode && (
+                      <rect
+                        x={tx - 2}
+                        y={ty - 2}
+                        width={tw + 4}
+                        height={th + 4}
+                        fill="none"
+                        stroke="#38bdf8"
+                        strokeWidth="2"
+                        strokeDasharray="4 2"
+                        rx="2"
+                      />
+                    )}
+
+                    {/* 消しゴムホバー枠 */}
+                    {isEraserMode && isHovered && (
+                      <rect
+                        x={tx - 2}
+                        y={ty - 2}
+                        width={tw + 4}
+                        height={th + 4}
+                        fill="rgba(239, 68, 68, 0.2)"
+                        stroke="#ef4444"
+                        strokeWidth="2.5"
+                        strokeDasharray="4 2"
+                        rx="2"
+                      />
+                    )}
+
+                    {/* 選択時の回転ハンドル (上部) */}
+                    {isSelected && !isEraserMode && (
+                      <g
+                        transform={`translate(${cx}, ${ty})`}
+                        className="cursor-grab active:cursor-grabbing"
+                        onPointerDown={(e) => handleRotateStart(item, e)}
+                      >
+                        <title>ドラッグして回転（Shiftキーで15度スナップ）</title>
+                        <line
+                          x1="0"
+                          y1="0"
+                          x2="0"
+                          y2="-20"
+                          stroke="#10b981"
+                          strokeWidth="1.5"
+                          strokeDasharray="2 2"
+                        />
+                        <circle
+                          cx="0"
+                          cy="-20"
+                          r="7"
+                          fill="#10b981"
+                          stroke="#ffffff"
+                          strokeWidth="1.5"
+                          className="hover:scale-125 transition transform shadow-md"
+                        />
+                        <path
+                          d="M -3 -20 A 3 3 0 1 1 3 -20"
+                          fill="none"
+                          stroke="#ffffff"
+                          strokeWidth="1.2"
+                        />
+                        <path
+                          d="M 2 -22 L 4 -20 L 2 -18"
+                          fill="none"
+                          stroke="#ffffff"
+                          strokeWidth="1.2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </g>
+                    )}
+
+                    {/* 選択時のクイック90°回転ボタン (右横) */}
+                    {isSelected && !isEraserMode && (
+                      <g
+                        transform={`translate(${tx + tw + 12}, ${ty + 10})`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const nextRot = ((item.rotation || 0) + 90) % 360
+                          onUpdateDrawing?.(item.id, { rotation: nextRot }, true)
+                        }}
+                        className="cursor-pointer hover:scale-125 transition transform"
+                      >
+                        <title>90度回転</title>
+                        <circle cx="0" cy="0" r="9" fill="#10b981" stroke="#ffffff" strokeWidth="1.5" />
+                        <path d="M -3.5 0 A 3.5 3.5 0 1 1 3.5 0" fill="none" stroke="#ffffff" strokeWidth="1.2" />
+                        <path
+                          d="M 2 -2.5 L 4.5 0 L 2 2.5"
+                          fill="none"
+                          stroke="#ffffff"
+                          strokeWidth="1.2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </g>
+                    )}
+
+                    {/* 選択時・ホバー時の削除ボタン */}
+                    {(isHovered || isSelected) && !isEraserMode && (
+                      <g
+                        transform={`translate(${tx + tw + 12}, ${ty + 34})`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onRemoveDrawing(item.id)
+                          setSelectedDrawingId(null)
+                        }}
+                        className="cursor-pointer hover:scale-125 transition transform"
+                      >
+                        <title>画像を削除</title>
+                        <circle cx="0" cy="0" r="9" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
+                        <line
+                          x1="-3.5"
+                          y1="-3.5"
+                          x2="3.5"
+                          y2="3.5"
+                          stroke="#ffffff"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                        />
+                        <line
+                          x1="3.5"
+                          y1="-3.5"
+                          x2="-3.5"
+                          y2="3.5"
+                          stroke="#ffffff"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                        />
+                      </g>
+                    )}
+
+                    {/* 四隅のリサイズハンドル (右下) */}
+                    {isSelected && !isEraserMode && (
+                      <circle
+                        cx={tx + tw}
+                        cy={ty + th}
+                        r="6"
+                        fill="#0284c7"
+                        stroke="#ffffff"
+                        strokeWidth="2"
+                        className="cursor-se-resize hover:scale-125 transition shadow-md"
+                        onPointerDown={(e) => handleImageResizeStart(item, e)}
+                      />
                     )}
                   </g>
                 )

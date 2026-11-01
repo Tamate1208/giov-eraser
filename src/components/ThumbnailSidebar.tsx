@@ -145,12 +145,14 @@ export const ThumbnailSidebar: React.FC<ThumbnailSidebarProps> = ({
     }
   }, [isResizing, onResizeWidth])
 
+  const cols = width < 280 ? 1 : width < 430 ? 2 : 3
+
   return (
     <aside
       style={{ width: `${width}px` }}
       className="relative shrink-0 border-r border-slate-800 bg-slate-900/80 backdrop-blur-md overflow-hidden flex flex-col select-none shadow-xl z-20 transition-all duration-75"
     >
-      {/* リサイザーバー (右端) */}
+      {/* リサイザーバー (右端: 当たり判定を14pxへ拡大、64pxハンドル) */}
       {onResizeWidth && (
         <div
           onPointerDown={(e) => {
@@ -161,11 +163,11 @@ export const ThumbnailSidebar: React.FC<ThumbnailSidebarProps> = ({
           }}
           onDoubleClick={() => onResizeWidth(256)}
           title="ドラッグで幅を調整 / ダブルクリックで標準幅に戻す"
-          className={`absolute right-0 top-0 bottom-0 w-1.5 -mr-1 cursor-col-resize hover:bg-blue-500 transition-colors z-30 group flex items-center justify-center ${
-            isResizing ? 'bg-blue-500' : 'bg-transparent'
+          className={`absolute right-0 top-0 bottom-0 w-3.5 -mr-1.5 cursor-col-resize hover:bg-blue-500/20 transition-colors z-40 group flex items-center justify-center ${
+            isResizing ? 'bg-blue-500/30' : 'bg-transparent'
           }`}
         >
-          <div className="w-0.5 h-8 bg-slate-600 rounded-full group-hover:bg-white transition-colors" />
+          <div className="w-1 h-16 bg-slate-500/60 rounded-full group-hover:bg-blue-400 group-hover:shadow-[0_0_8px_rgba(96,165,250,0.8)] transition-all" />
         </div>
       )}
       {/* 隠しPDFマージ用ファイルinput */}
@@ -233,7 +235,22 @@ export const ThumbnailSidebar: React.FC<ThumbnailSidebarProps> = ({
               </button>
             </div>
 
-            {/* ページ抽出アクション */}
+            {/* 複数ページ選択時の作業机一括追加バナー */}
+            {onAddSelectedToDesk && selectedPagesForExtract.size > 0 && (
+              <button
+                onClick={() => {
+                  const indices = Array.from(selectedPagesForExtract).sort((a, b) => a - b)
+                  onAddSelectedToDesk(indices)
+                }}
+                className="w-full py-1.5 px-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-md shadow-blue-600/30 transition active:scale-95 cursor-pointer animate-fade-in"
+                title={`選択した${selectedPagesForExtract.size}ページを作業机に一括で送ります`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>選択した {selectedPagesForExtract.size} ページを作業机へ送る</span>
+              </button>
+            )}
+
+            {/* ページ抽出・選択アクション */}
             <div className="flex items-center justify-between pt-1 border-t border-slate-800/50 text-[10px] text-slate-400">
               <div className="flex items-center gap-1">
                 <button
@@ -243,7 +260,7 @@ export const ThumbnailSidebar: React.FC<ThumbnailSidebarProps> = ({
                       : onSelectAllPagesForExtract
                   }
                   className="flex items-center gap-1 hover:text-white transition cursor-pointer"
-                  title="抽出用の選択切り替え"
+                  title="ページの選択切り替え"
                 >
                   {selectedPagesForExtract.size === pages.length ? (
                     <CheckSquare className="w-3 h-3 text-blue-400" />
@@ -255,20 +272,6 @@ export const ThumbnailSidebar: React.FC<ThumbnailSidebarProps> = ({
               </div>
 
               <div className="flex items-center gap-1.5">
-                {onAddSelectedToDesk && selectedPagesForExtract.size > 0 && (
-                  <button
-                    onClick={() => {
-                      const indices = Array.from(selectedPagesForExtract).sort((a, b) => a - b)
-                      onAddSelectedToDesk(indices)
-                    }}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 font-bold border border-blue-500/30 transition cursor-pointer active:scale-95"
-                    title={`選択した${selectedPagesForExtract.size}ページを作業机に追加`}
-                  >
-                    <Layers className="w-3 h-3 text-blue-400" />
-                    <span>机へ送る</span>
-                  </button>
-                )}
-
                 <button
                   onClick={handleExtractClick}
                   className="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600/30 hover:bg-blue-600/50 text-blue-300 font-bold border border-blue-500/40 transition cursor-pointer active:scale-95"
@@ -285,8 +288,10 @@ export const ThumbnailSidebar: React.FC<ThumbnailSidebarProps> = ({
             </div>
           </div>
 
-          {/* ページサムネイル一覧 */}
-          <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-3">
+          {/* ページサムネイル一覧 (1〜3列自動グリッド) */}
+          <div className={`flex-1 overflow-y-auto p-3 grid gap-3 content-start ${
+            cols === 1 ? 'grid-cols-1' : cols === 2 ? 'grid-cols-2' : 'grid-cols-3'
+          }`}>
             {pages.map((p) => {
               const isSelected = p.index === currentPage
               const count = countsByPage.get(p.index) || 0
@@ -323,19 +328,23 @@ export const ThumbnailSidebar: React.FC<ThumbnailSidebarProps> = ({
                       </div>
                     )}
 
-                    {/* 抽出用チェックボックス (左上) */}
+                    {/* 複数選択チェックボックス (左上) */}
                     <div
                       onClick={(e) => {
                         e.stopPropagation()
                         onTogglePageSelectForExtract(p.index)
                       }}
-                      className="absolute top-1.5 left-1.5 p-1 rounded-md bg-black/60 hover:bg-black/80 backdrop-blur-sm transition cursor-pointer text-white"
-                      title="抽出対象として選択"
+                      className={`absolute top-1.5 left-1.5 p-1 rounded-md transition cursor-pointer ${
+                        isChecked
+                          ? 'bg-blue-600 text-white shadow-md ring-2 ring-white/50'
+                          : 'bg-black/60 hover:bg-black/90 text-slate-300'
+                      }`}
+                      title="ページを選択（作業机への一括送信や抽出保存が可能）"
                     >
                       {isChecked ? (
-                        <CheckSquare className="w-3.5 h-3.5 text-blue-400" />
+                        <CheckSquare className="w-3.5 h-3.5 text-white" />
                       ) : (
-                        <Square className="w-3.5 h-3.5 text-slate-400" />
+                        <Square className="w-3.5 h-3.5 text-slate-300" />
                       )}
                     </div>
 

@@ -1,6 +1,5 @@
-import { PDFDocument, degrees } from 'pdf-lib'
 import { DeskDoc, DeskItem } from '../types/desk'
-import { renderPageImage, getPdfInfo } from './mupdfService'
+import { renderPageImage, getPdfInfo, getMuPdf } from './mupdfService'
 
 /**
  * 外部PDFファイルからDeskDocを作成し、全ページまたは特定ページのDeskItem群を生成
@@ -55,34 +54,46 @@ export async function generateDeskItemThumbnail(
 }
 
 /**
- * 作業机上のアイテム群から新しい単一のPDFを編纂・結合して生成
+ * 作業机上のアイテム群から新しい単一のPDFをMuPDFネイティブ移植で高速・高精度に編纂・結合
  */
 export async function buildMergedPdfFromDesk(
   items: DeskItem[],
   docsMap: Map<string, DeskDoc>
 ): Promise<Uint8Array> {
-  const mergedDoc = await PDFDocument.create()
-  const parsedDocs = new Map<string, PDFDocument>()
+  const m = await getMuPdf()
+  const newDoc = new m.PDFDocument()
+  const openDocs = new Map<string, any>()
 
   for (const item of items) {
     const docMeta = docsMap.get(item.docId)
-    if (!docMeta) continue
+    if (!docMeta) {
+      console.warn(`Doc not found for item:`, item)
+      continue
+    }
 
-    let srcDoc = parsedDocs.get(item.docId)
+    let srcDoc = openDocs.get(item.docId)
     if (!srcDoc) {
-      srcDoc = await PDFDocument.load(docMeta.bytes, { ignoreEncryption: true })
-      parsedDocs.set(item.docId, srcDoc)
+      srcDoc = m.Document.openDocument(docMeta.bytes, 'application/pdf')
+      openDocs.set(item.docId, srcDoc)
     }
 
-    if (item.pageIndex < 0 || item.pageIndex >= srcDoc.getPageCount()) continue
+    if (item.pageIndex >= 0 && item.pageIndex < srcDoc.countPages()) {
+      const newPageIdx = newDoc.countPages()
+      newDoc.graftPage(newPageIdx, srcDoc, item.pageIndex)
 
-    const [copiedPage] = await mergedDoc.copyPages(srcDoc, [item.pageIndex])
-    if (item.rotation) {
-      const currentRot = copiedPage.getRotation().angle
-      copiedPage.setRotation(degrees((currentRot + item.rotation) % 360))
+      if (item.rotation !== 0) {
+        const lastPage = newDoc.loadPage(newPageIdx)
+        let baseRot = 0
+        try {
+          const rotObj = lastPage.getObject().get('Rotate')
+          if (rotObj && !rotObj.isNull()) baseRot = rotObj.asNumber() || 0
+        } catch {}
+        const finalRot = (((baseRot + item.rotation) % 360) + 360) % 360
+        lastPage.getObject().put('Rotate', newDoc.newInteger(finalRot))
+      }
     }
-    mergedDoc.addPage(copiedPage)
   }
 
-  return await mergedDoc.save()
+  const u8 = newDoc.saveToBuffer('clean,garbage').asUint8Array()
+  return new Uint8Array(u8)
 }

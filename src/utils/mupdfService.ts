@@ -723,6 +723,78 @@ export async function applyRedactions(
           }
         }
       }
+
+      // 画像アイテムの物理合成（XObject登録 ＆ Contentsストリームへの埋め込み）
+      let imgIndex = 0;
+      for (const d of drawList) {
+        if (
+          d.tool === 'image' &&
+          (d.imageBytes || d.imageUrl) &&
+          d.x !== undefined &&
+          d.y !== undefined &&
+          d.w !== undefined &&
+          d.h !== undefined
+        ) {
+          try {
+            let u8Bytes = d.imageBytes;
+            if (!u8Bytes && d.imageUrl && d.imageUrl.startsWith('data:')) {
+              const base64Part = d.imageUrl.split(',')[1];
+              const bin = atob(base64Part);
+              u8Bytes = new Uint8Array(bin.length);
+              for (let k = 0; k < bin.length; k++) {
+                u8Bytes[k] = bin.charCodeAt(k);
+              }
+            }
+
+            if (u8Bytes) {
+              const img = new m.Image(u8Bytes);
+              const imgObj = doc.addImage(img);
+              const imgName = `ImG_${i}_${imgIndex++}`;
+
+              let res = pageObj.get('Resources');
+              if (!res || res.isNull()) {
+                res = doc.newDictionary();
+                pageObj.put('Resources', res);
+              }
+              let xobjs = res.get('XObject');
+              if (!xobjs || xobjs.isNull()) {
+                xobjs = doc.newDictionary();
+                res.put('XObject', xobjs);
+              }
+              xobjs.put(imgName, imgObj);
+
+              // 座標変換 (PDF座標系: 左下原点)
+              const pdfX = toPdfX(d.x);
+              const pdfY = toPdfY(d.y + d.h);
+              const pdfW = d.w;
+              const pdfH = d.h;
+              const rot = d.rotation || 0;
+
+              stream += 'q\n';
+              if (rot === 0) {
+                stream += `${pdfW.toFixed(2)} 0 0 ${pdfH.toFixed(2)} ${pdfX.toFixed(2)} ${pdfY.toFixed(2)} cm\n`;
+              } else {
+                const rad = (-rot * Math.PI) / 180;
+                const cos = Math.cos(rad);
+                const sin = Math.sin(rad);
+                const cx = pdfX + pdfW / 2;
+                const cy = pdfY + pdfH / 2;
+                const a = pdfW * cos;
+                const b = pdfW * sin;
+                const c = -pdfH * sin;
+                const dCoeff = pdfH * cos;
+                const e = cx - (pdfW * cos - pdfH * sin) / 2;
+                const f = cy - (pdfW * sin + pdfH * cos) / 2;
+                stream += `${a.toFixed(2)} ${b.toFixed(2)} ${c.toFixed(2)} ${dCoeff.toFixed(2)} ${e.toFixed(2)} ${f.toFixed(2)} cm\n`;
+              }
+              stream += `/${imgName} Do\n`;
+              stream += 'Q\n';
+            }
+          } catch (imgErr) {
+            console.error('画像ベイクエラー:', imgErr);
+          }
+        }
+      }
     }
 
     // 4. ベクターストリーム（墨消し下地矩形 ＋ 描画図形）をページの Contents に物理合成

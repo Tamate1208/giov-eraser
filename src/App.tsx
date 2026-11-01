@@ -99,12 +99,14 @@ export default function App() {
   })
 
   const handleResizeLeftSidebar = (w: number) => {
-    setLeftSidebarWidth(w)
-    localStorage.setItem('giov_left_sidebar_width', w.toString())
+    const clamped = Math.min(650, Math.max(180, w))
+    setLeftSidebarWidth(clamped)
+    localStorage.setItem('giov_left_sidebar_width', clamped.toString())
   }
   const handleResizeRightSidebar = (w: number) => {
-    setRightSidebarWidth(w)
-    localStorage.setItem('giov_right_sidebar_width', w.toString())
+    const clamped = Math.min(750, Math.max(260, w))
+    setRightSidebarWidth(clamped)
+    localStorage.setItem('giov_right_sidebar_width', clamped.toString())
   }
 
   // 作業机の state (初期状態は閉じた状態 false: これまでの通常使用を完全維持)
@@ -825,31 +827,36 @@ export default function App() {
     }, 4500)
   }
 
-  // 現在開いているドキュメントを deskDocs のプールに同期
-  useEffect(() => {
-    if (!pdfBytes || !fileName || !docInfo) return
-    const docId = 'current_doc'
+  // 現在開いているドキュメントを固有IDで deskDocs のプールに安全に登録するヘルパー
+  const registerCurrentDocToDesk = (): string | null => {
+    if (!pdfBytes || !fileName || !docInfo) return null
+    const docId = `doc_${fileName.replace(/[^a-zA-Z0-9_-]/g, '_')}_${pdfBytes.byteLength}`
     setDeskDocs((prev) => {
       const next = new Map(prev)
-      next.set(docId, {
-        id: docId,
-        name: fileName,
-        bytes: pdfBytes,
-        pageCount: docInfo.numPages,
-      })
+      if (!next.has(docId)) {
+        next.set(docId, {
+          id: docId,
+          name: fileName,
+          bytes: pdfBytes,
+          pageCount: docInfo.numPages,
+        })
+      }
       return next
     })
-  }, [pdfBytes, fileName, docInfo])
+    return docId
+  }
 
   // 指定ページを作業机に追加
   const handleAddToDesk = (pageIdx: number) => {
     if (!docInfo || !pdfBytes || !fileName) return
     const page = docInfo.pages[pageIdx]
     if (!page) return
+    const docId = registerCurrentDocToDesk()
+    if (!docId) return
 
     const newItem: DeskItem = {
       id: `item_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      docId: 'current_doc',
+      docId,
       docName: fileName,
       pageIndex: pageIdx,
       pageNumber: pageIdx + 1,
@@ -866,12 +873,14 @@ export default function App() {
   // 選択中の複数ページを一括で作業机に追加
   const handleAddSelectedToDesk = (indices: number[]) => {
     if (!docInfo || !pdfBytes || !fileName || indices.length === 0) return
+    const docId = registerCurrentDocToDesk()
+    if (!docId) return
 
     const newItems: DeskItem[] = indices.map((idx) => {
       const page = docInfo.pages[idx]
       return {
         id: `item_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
-        docId: 'current_doc',
+        docId,
         docName: fileName,
         pageIndex: idx,
         pageNumber: idx + 1,
@@ -884,6 +893,63 @@ export default function App() {
     setDeskItems((prev) => [...prev, ...newItems])
     setIsDeskOpen(true)
     showToast(`${indices.length} ページを作業机に追加しました`)
+  }
+
+  // 現在のPDFの全ページを一括で作業机に追加
+  const handleAddAllPagesToDesk = () => {
+    if (!docInfo || !pdfBytes || !fileName) return
+    const allIndices = docInfo.pages.map((p) => p.index)
+    handleAddSelectedToDesk(allIndices)
+  }
+
+  // 画像挿入ハンドラ
+  const handleInsertImage = async (file: File) => {
+    try {
+      const url = URL.createObjectURL(file)
+      const img = new Image()
+      img.src = url
+      await new Promise((resolve, reject) => {
+        img.onload = () => resolve(true)
+        img.onerror = reject
+      })
+
+      const buf = await file.arrayBuffer()
+      const bytes = new Uint8Array(buf)
+
+      const naturalW = img.naturalWidth || 200
+      const naturalH = img.naturalHeight || 200
+      // 用紙幅に収まるよう標準幅 160pt（約240px）にスケーリング
+      const targetW = 160
+      const scale = targetW / naturalW
+      const targetH = Math.round(naturalH * scale)
+
+      const curPage = docInfo?.pages[currentPage]
+      const targetX = curPage ? Math.round((curPage.width - targetW) / 2) : 100
+      const targetY = curPage ? Math.round((curPage.height - targetH) / 2) : 100
+
+      handleAddDrawing({
+        pageIndex: currentPage,
+        tool: 'image',
+        color: '#000000',
+        fillMode: 'none',
+        lineWidth: 1,
+        fontSize: 16,
+        x: targetX,
+        y: targetY,
+        w: targetW,
+        h: targetH,
+        aspectRatio: targetW / targetH,
+        imageUrl: url,
+        imageBytes: bytes,
+        imageMime: file.type,
+        rotation: 0,
+      })
+
+      showToast(`🖼️ 画像「${file.name}」を挿入しました`)
+    } catch (err) {
+      console.error('画像挿入エラー:', err)
+      alert('画像の読み込みに失敗しました。')
+    }
   }
 
   // 外部PDFファイル群を作業机に追加
@@ -1102,6 +1168,7 @@ export default function App() {
             onFillModeChange={setFillMode}
             onArrowHeadChange={setArrowHead}
             onCheckSizeChange={setCheckSize}
+            onInsertImage={handleInsertImage}
             rulerScale={rulerScale}
             onRulerScaleChange={setRulerScale}
             rulerMeasureMode={rulerMeasureMode}
@@ -1172,9 +1239,14 @@ export default function App() {
               docsMap={deskDocs}
               currentPageIndex={currentPage}
               currentDocName={fileName}
+              selectedPageCount={selectedPagesForExtract.size}
               onClose={() => setIsDeskOpen(false)}
               onResizeWidth={handleResizeRightSidebar}
               onAddCurrentPage={() => handleAddToDesk(currentPage)}
+              onAddSelectedPages={() =>
+                handleAddSelectedToDesk(Array.from(selectedPagesForExtract).sort((a, b) => a - b))
+              }
+              onAddAllPages={handleAddAllPagesToDesk}
               onAddPdfFiles={handleAddPdfFilesToDesk}
               onMoveItem={handleMoveDeskItem}
               onRotateItem={handleRotateDeskItem}

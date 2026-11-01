@@ -6,6 +6,7 @@ export type DrawingTool =
   | 'pan'
   | 'select'
   | 'text'
+  | 'image'
   | 'line'
   | 'rect'
   | 'polygon'
@@ -39,7 +40,12 @@ export interface DrawingItem {
   text?: string
   bgWhite?: boolean
   rotation?: number // 回転角度 (0〜360度)
-  // 矩形・丸・テキスト・チェックのバウンディングボックス (PDF座標系: 左上原点)
+  // 画像用
+  imageUrl?: string
+  imageBytes?: Uint8Array
+  imageMime?: string
+  aspectRatio?: number
+  // 矩形・丸・テキスト・チェック・画像のバウンディングボックス (PDF座標系: 左上原点)
   x?: number
   y?: number
   w?: number

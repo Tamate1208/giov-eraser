@@ -14,6 +14,7 @@ import {
   Layers,
   Sparkles,
   CheckCircle2,
+  CopyPlus,
 } from 'lucide-react'
 
 interface DeskSidebarProps {
@@ -23,9 +24,12 @@ interface DeskSidebarProps {
   docsMap: Map<string, DeskDoc>;
   currentPageIndex: number;
   currentDocName: string | null;
+  selectedPageCount?: number;
   onClose: () => void;
   onResizeWidth: (w: number) => void;
   onAddCurrentPage: () => void;
+  onAddSelectedPages?: () => void;
+  onAddAllPages?: () => void;
   onAddPdfFiles: (files: FileList) => void;
   onMoveItem: (fromIndex: number, toIndex: number) => void;
   onRotateItem: (id: string) => void;
@@ -44,9 +48,12 @@ export const DeskSidebar: React.FC<DeskSidebarProps> = ({
   docsMap,
   currentPageIndex,
   currentDocName,
+  selectedPageCount = 0,
   onClose,
   onResizeWidth,
   onAddCurrentPage,
+  onAddSelectedPages,
+  onAddAllPages,
   onAddPdfFiles,
   onMoveItem,
   onRotateItem,
@@ -62,6 +69,8 @@ export const DeskSidebar: React.FC<DeskSidebarProps> = ({
   const [isResizing, setIsResizing] = useState(false)
   const resizeStartXRef = useRef<number>(0)
   const resizeStartWidthRef = useRef<number>(width)
+
+  const cols = width < 320 ? 1 : width < 480 ? 2 : 3
 
   // アイテムのサムネイルを非同期生成
   useEffect(() => {
@@ -90,7 +99,7 @@ export const DeskSidebar: React.FC<DeskSidebarProps> = ({
     const handlePointerMove = (e: PointerEvent) => {
       // 右サイドバーなので、左に引くと幅が増え、右に引くと幅が減る
       const deltaX = resizeStartXRef.current - e.clientX
-      const newWidth = Math.min(650, Math.max(260, resizeStartWidthRef.current + deltaX))
+      const newWidth = Math.min(750, Math.max(260, resizeStartWidthRef.current + deltaX))
       onResizeWidth(newWidth)
     }
 
@@ -113,7 +122,7 @@ export const DeskSidebar: React.FC<DeskSidebarProps> = ({
       style={{ width: `${width}px` }}
       className="relative shrink-0 border-l border-slate-800 bg-slate-900/90 backdrop-blur-md flex flex-col select-none shadow-2xl z-20 transition-all duration-75"
     >
-      {/* リサイザーバー (左端) */}
+      {/* リサイザーバー (左端: 当たり判定14px、64pxハンドル) */}
       <div
         onPointerDown={(e) => {
           e.preventDefault()
@@ -123,11 +132,11 @@ export const DeskSidebar: React.FC<DeskSidebarProps> = ({
         }}
         onDoubleClick={() => onResizeWidth(340)}
         title="ドラッグで幅を調整 / ダブルクリックで標準幅に戻す"
-        className={`absolute left-0 top-0 bottom-0 w-1.5 -ml-1 cursor-col-resize hover:bg-blue-500 transition-colors z-30 group flex items-center justify-center ${
-          isResizing ? 'bg-blue-500' : 'bg-transparent'
+        className={`absolute left-0 top-0 bottom-0 w-3.5 -ml-1.5 cursor-col-resize hover:bg-blue-500/20 transition-colors z-40 group flex items-center justify-center ${
+          isResizing ? 'bg-blue-500/30' : 'bg-transparent'
         }`}
       >
-        <div className="w-0.5 h-8 bg-slate-600 rounded-full group-hover:bg-white transition-colors" />
+        <div className="w-1 h-16 bg-slate-500/60 rounded-full group-hover:bg-blue-400 group-hover:shadow-[0_0_8px_rgba(96,165,250,0.8)] transition-all" />
       </div>
 
       {/* 隠しファイルinput */}
@@ -173,10 +182,10 @@ export const DeskSidebar: React.FC<DeskSidebarProps> = ({
 
       {/* 操作アクションバー */}
       <div className="p-3 border-b border-slate-800/80 bg-slate-900/60 flex flex-col gap-2">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="flex-1 px-2.5 py-1.5 rounded-lg bg-blue-600/90 hover:bg-blue-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer"
+            className="flex-1 min-w-[100px] px-2.5 py-1.5 rounded-lg bg-blue-600/90 hover:bg-blue-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer"
             title="別のPDFファイルを追加して机の上に並べます"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -184,13 +193,35 @@ export const DeskSidebar: React.FC<DeskSidebarProps> = ({
           </button>
 
           {currentDocName && (
+            selectedPageCount > 0 && onAddSelectedPages ? (
+              <button
+                onClick={onAddSelectedPages}
+                className="flex-1 min-w-[120px] px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-md shadow-blue-600/25 transition active:scale-95 cursor-pointer animate-pulse"
+                title={`選択中の ${selectedPageCount} ページを作業机に一括追加`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>選択中の{selectedPageCount}頁を置く</span>
+              </button>
+            ) : (
+              <button
+                onClick={onAddCurrentPage}
+                className="flex-1 min-w-[100px] px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center justify-center gap-1.5 border border-slate-700 transition active:scale-95 cursor-pointer"
+                title={`現在表示中のページ (p.${currentPageIndex + 1}) を作業机に置きます`}
+              >
+                <FileText className="w-3.5 h-3.5 text-blue-400" />
+                <span>現在の頁を置く</span>
+              </button>
+            )
+          )}
+
+          {currentDocName && onAddAllPages && (
             <button
-              onClick={onAddCurrentPage}
-              className="flex-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center justify-center gap-1.5 border border-slate-700 transition active:scale-95 cursor-pointer"
-              title={`現在表示中のページ (p.${currentPageIndex + 1}) を作業机に置きます`}
+              onClick={onAddAllPages}
+              className="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium flex items-center gap-1 border border-slate-700 transition active:scale-95 cursor-pointer"
+              title="現在開いているPDFの全ページを作業机に追加します"
             >
-              <FileText className="w-3.5 h-3.5 text-blue-400" />
-              <span>現在の頁を置く</span>
+              <CopyPlus className="w-3 h-3 text-slate-400" />
+              <span>全頁追加</span>
             </button>
           )}
         </div>
@@ -213,9 +244,11 @@ export const DeskSidebar: React.FC<DeskSidebarProps> = ({
         )}
       </div>
 
-      {/* 机の上のページカードリスト */}
+      {/* 机の上のページカードリスト (1〜3列自動グリッド) */}
       <div
-        className="flex-1 overflow-y-auto p-3 space-y-2.5"
+        className={`flex-1 overflow-y-auto p-3 grid gap-2.5 content-start ${
+          cols === 1 ? 'grid-cols-1' : cols === 2 ? 'grid-cols-2' : 'grid-cols-3'
+        }`}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault()
@@ -225,7 +258,7 @@ export const DeskSidebar: React.FC<DeskSidebarProps> = ({
         }}
       >
         {items.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center p-6 border-2 border-dashed border-slate-800 rounded-xl bg-slate-950/40 text-slate-500 space-y-3">
+          <div className="col-span-full h-full min-h-[220px] flex flex-col items-center justify-center text-center p-6 border-2 border-dashed border-slate-800 rounded-xl bg-slate-950/40 text-slate-500 space-y-3">
             <div className="p-3 bg-slate-800/60 rounded-full text-slate-400">
               <Layers className="w-6 h-6" />
             </div>
@@ -241,91 +274,174 @@ export const DeskSidebar: React.FC<DeskSidebarProps> = ({
             const thumbKey = `${item.id}_rot${item.rotation}`
             const thumbUrl = thumbnails.get(thumbKey)
 
-            return (
-              <div
-                key={item.id}
-                onClick={() => onSelectDeskItemPreview?.(item)}
-                className="group relative bg-slate-800/70 hover:bg-slate-800 border border-slate-700/80 hover:border-blue-500/50 rounded-xl p-2 flex items-center gap-3 transition shadow-md cursor-pointer"
-              >
-                {/* 順番番号 */}
-                <div className="w-5 text-center text-xs font-mono font-bold text-slate-400 shrink-0">
-                  {idx + 1}
-                </div>
-
-                {/* サムネイル */}
-                <div className="w-14 h-18 bg-slate-950 rounded-lg overflow-hidden border border-slate-700 shrink-0 relative flex items-center justify-center">
-                  {thumbUrl ? (
-                    <img
-                      src={thumbUrl}
-                      alt={`p.${item.pageNumber}`}
-                      className="w-full h-full object-contain"
-                    />
-                  ) : (
-                    <div className="w-4 h-4 rounded-full border-2 border-blue-500/30 border-t-blue-500 animate-spin" />
-                  )}
-                  {item.rotation !== 0 && (
-                    <span className="absolute bottom-1 right-1 bg-black/80 text-[9px] text-emerald-400 px-1 rounded font-mono">
-                      {item.rotation}°
-                    </span>
-                  )}
-                </div>
-
-                {/* 情報 */}
-                <div className="flex-1 min-w-0 pr-1">
-                  <div
-                    className="text-xs font-semibold text-slate-200 truncate"
-                    title={item.docName}
-                  >
-                    {item.docName}
-                  </div>
-                  <div className="text-[11px] text-slate-400 font-mono mt-0.5">
-                    第 {item.pageNumber} ページ
-                  </div>
-                </div>
-
-                {/* 操作アクションボタン群 */}
+            if (cols === 1) {
+              // 1列表示: 横長リストカード
+              return (
                 <div
-                  className="flex flex-col gap-1 shrink-0"
-                  onClick={(e) => e.stopPropagation()}
+                  key={item.id}
+                  onClick={() => onSelectDeskItemPreview?.(item)}
+                  className="group relative bg-slate-800/70 hover:bg-slate-800 border border-slate-700/80 hover:border-blue-500/50 rounded-xl p-2 flex items-center gap-3 transition shadow-md cursor-pointer"
                 >
-                  <div className="flex items-center gap-1">
-                    <button
-                      disabled={idx === 0}
-                      onClick={() => onMoveItem(idx, idx - 1)}
-                      className="p-1 rounded bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition cursor-pointer"
-                      title="上へ移動"
-                    >
-                      <ArrowUp className="w-3 h-3" />
-                    </button>
-                    <button
-                      disabled={idx === items.length - 1}
-                      onClick={() => onMoveItem(idx, idx + 1)}
-                      className="p-1 rounded bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition cursor-pointer"
-                      title="下へ移動"
-                    >
-                      <ArrowDown className="w-3 h-3" />
-                    </button>
+                  <div className="w-5 text-center text-xs font-mono font-bold text-slate-400 shrink-0">
+                    {idx + 1}
                   </div>
 
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => onRotateItem(item.id)}
-                      className="p-1 rounded bg-slate-700/60 hover:bg-emerald-600/80 text-slate-300 hover:text-white transition cursor-pointer"
-                      title="90°右回転"
+                  <div className="w-14 h-18 bg-slate-950 rounded-lg overflow-hidden border border-slate-700 shrink-0 relative flex items-center justify-center">
+                    {thumbUrl ? (
+                      <img
+                        src={thumbUrl}
+                        alt={`p.${item.pageNumber}`}
+                        className="w-full h-full object-contain"
+                      />
+                    ) : (
+                      <div className="w-4 h-4 rounded-full border-2 border-blue-500/30 border-t-blue-500 animate-spin" />
+                    )}
+                    {item.rotation !== 0 && (
+                      <span className="absolute bottom-1 right-1 bg-black/80 text-[9px] text-emerald-400 px-1 rounded font-mono">
+                        {item.rotation}°
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex-1 min-w-0 pr-1">
+                    <div
+                      className="text-xs font-semibold text-slate-200 truncate"
+                      title={item.docName}
                     >
-                      <RotateCw className="w-3 h-3 text-emerald-400" />
-                    </button>
-                    <button
-                      onClick={() => onRemoveItem(item.id)}
-                      className="p-1 rounded bg-slate-700/60 hover:bg-rose-600/80 text-slate-300 hover:text-white transition cursor-pointer"
-                      title="机から外す"
-                    >
-                      <Trash2 className="w-3 h-3 text-rose-400" />
-                    </button>
+                      {item.docName}
+                    </div>
+                    <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                      第 {item.pageNumber} ページ
+                    </div>
+                  </div>
+
+                  <div
+                    className="flex flex-col gap-1 shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center gap-1">
+                      <button
+                        disabled={idx === 0}
+                        onClick={() => onMoveItem(idx, idx - 1)}
+                        className="p-1 rounded bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition cursor-pointer"
+                        title="上へ移動"
+                      >
+                        <ArrowUp className="w-3 h-3" />
+                      </button>
+                      <button
+                        disabled={idx === items.length - 1}
+                        onClick={() => onMoveItem(idx, idx + 1)}
+                        className="p-1 rounded bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition cursor-pointer"
+                        title="下へ移動"
+                      >
+                        <ArrowDown className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => onRotateItem(item.id)}
+                        className="p-1 rounded bg-slate-700/60 hover:bg-emerald-600/80 text-slate-300 hover:text-white transition cursor-pointer"
+                        title="90°右回転"
+                      >
+                        <RotateCw className="w-3 h-3 text-emerald-400" />
+                      </button>
+                      <button
+                        onClick={() => onRemoveItem(item.id)}
+                        className="p-1 rounded bg-slate-700/60 hover:bg-rose-600/80 text-slate-300 hover:text-white transition cursor-pointer"
+                        title="机から外す"
+                      >
+                        <Trash2 className="w-3 h-3 text-rose-400" />
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )
+              )
+            } else {
+              // 2〜3列表示: タイルグリッドカード
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => onSelectDeskItemPreview?.(item)}
+                  className="group relative bg-slate-800/70 hover:bg-slate-800 border border-slate-700/80 hover:border-blue-500/50 rounded-xl p-2 flex flex-col gap-1.5 transition shadow-md cursor-pointer"
+                >
+                  <div className="w-full aspect-[1/1.3] bg-slate-950 rounded-lg overflow-hidden border border-slate-700 relative flex items-center justify-center">
+                    {thumbUrl ? (
+                      <img
+                        src={thumbUrl}
+                        alt={`p.${item.pageNumber}`}
+                        className="w-full h-full object-contain"
+                      />
+                    ) : (
+                      <div className="w-4 h-4 rounded-full border-2 border-blue-500/30 border-t-blue-500 animate-spin" />
+                    )}
+
+                    <span className="absolute top-1 left-1 bg-black/70 text-slate-300 text-[10px] px-1.5 py-0.2 rounded font-mono font-bold">
+                      #{idx + 1}
+                    </span>
+
+                    {item.rotation !== 0 && (
+                      <span className="absolute bottom-1 right-1 bg-black/80 text-[9px] text-emerald-400 px-1 rounded font-mono">
+                        {item.rotation}°
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="min-w-0">
+                    <div
+                      className="text-[11px] font-semibold text-slate-200 truncate"
+                      title={item.docName}
+                    >
+                      {item.docName}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono">
+                      p.{item.pageNumber}
+                    </div>
+                  </div>
+
+                  <div
+                    className="flex items-center justify-between pt-1 border-t border-slate-700/50"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center gap-1">
+                      <button
+                        disabled={idx === 0}
+                        onClick={() => onMoveItem(idx, idx - 1)}
+                        className="p-1 rounded bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white disabled:opacity-20 transition"
+                        title="前へ移動"
+                      >
+                        <ArrowUp className="w-3 h-3" />
+                      </button>
+                      <button
+                        disabled={idx === items.length - 1}
+                        onClick={() => onMoveItem(idx, idx + 1)}
+                        className="p-1 rounded bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white disabled:opacity-20 transition"
+                        title="次へ移動"
+                      >
+                        <ArrowDown className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => onRotateItem(item.id)}
+                        className="p-1 rounded bg-slate-700/60 hover:bg-emerald-600/80 text-slate-300 hover:text-white transition"
+                        title="90°回転"
+                      >
+                        <RotateCw className="w-3 h-3 text-emerald-400" />
+                      </button>
+                      <button
+                        onClick={() => onRemoveItem(item.id)}
+                        className="p-1 rounded bg-slate-700/60 hover:bg-rose-600/80 text-slate-300 hover:text-white transition"
+                        title="机から外す"
+                      >
+                        <Trash2 className="w-3 h-3 text-rose-400" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )
+            }
           })
         )}
       </div>
