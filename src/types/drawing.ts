@@ -45,6 +45,15 @@ export interface DrawingItem {
   points?: Point[]
 }
 
+// しおり（目次 / ブックマーク）アイテム
+export interface BookmarkItem {
+  id: string
+  title: string
+  page: number // 0-based page index
+  children?: BookmarkItem[]
+  isOpen?: boolean
+}
+
 // 元に戻す (Undo) 用の履歴アクション
 export type HistoryAction =
   | { type: 'add_redaction'; redactionId: string }

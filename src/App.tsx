@@ -9,6 +9,10 @@ import {
   searchPageKeyword,
   extractTextRectsInBBox,
   applyRedactions,
+  mergePdfFiles,
+  extractPages,
+  deletePagesFromPdf,
+  loadPdfBookmarks,
   RedactRect,
   PdfDocumentInfo,
 } from './utils/mupdfService'
@@ -19,6 +23,7 @@ import {
   ArrowHead,
   DrawingItem,
   HistoryAction,
+  BookmarkItem,
 } from './types/drawing'
 import {
   FileUp,
@@ -40,6 +45,15 @@ export default function App() {
   const [colorMode, setColorMode] = useState<'black' | 'white'>('black')
   const [selectMode, setSelectMode] = useState<'text' | 'rect'>('text')
   const [redactions, setRedactions] = useState<RedactRect[]>([])
+
+  // ページごとの回転角度 (pageIndex -> 0 | 90 | 180 | 270)
+  const [pageRotations, setPageRotations] = useState<Record<number, number>>({})
+
+  // しおり（目次）ツリー
+  const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([])
+
+  // 抽出対象として選択中のページセット
+  const [selectedPagesForExtract, setSelectedPagesForExtract] = useState<Set<number>>(new Set())
 
   // 描画・校正モード用 state
   const [appMode, setAppMode] = useState<AppMode>('eraser')
@@ -76,9 +90,15 @@ export default function App() {
       const bytes = new Uint8Array(buffer)
       setPdfBytes(bytes)
 
-      // メタ情報取得
-      const info = await getPdfInfo(bytes)
+      // メタ情報としおり情報の取得
+      const [info, bms] = await Promise.all([
+        getPdfInfo(bytes),
+        loadPdfBookmarks(bytes),
+      ])
       setDocInfo(info)
+      setBookmarks(bms)
+      setPageRotations({})
+      setSelectedPagesForExtract(new Set())
       setCurrentPage(0)
       setRedactions([])
       setDrawings([])
@@ -106,15 +126,16 @@ export default function App() {
     }
   }
 
-  // ページ切り替え時にプレビュー画像をオンデマンド生成
+  // ページ切り替え時、または回転変更時にプレビュー画像をオンデマンド生成
   useEffect(() => {
     if (!pdfBytes || !docInfo) return
+    const rot = pageRotations[currentPage] || 0
     if (!pageImages.has(currentPage)) {
-      renderPageImage(pdfBytes, currentPage, 1.5).then((url) => {
+      renderPageImage(pdfBytes, currentPage, 1.5, rot).then((url) => {
         setPageImages((prev) => new Map(prev).set(currentPage, url))
       })
     }
-  }, [currentPage, pdfBytes, docInfo])
+  }, [currentPage, pdfBytes, docInfo, pageRotations])
 
   // ファイルドラッグ＆ドロップ受付
   const handleDrop = (e: React.DragEvent) => {
@@ -425,20 +446,309 @@ export default function App() {
     }
   }
 
-  // 墨消し＆描画実行＆クリーンPDFダウンロード
+  // ページの回転処理 (90°単位)
+  const handleRotatePage = async (pageIndex: number, deltaDeg: number) => {
+    if (!pdfBytes) return
+    const currentRot = pageRotations[pageIndex] || 0
+    const newRot = (((currentRot + deltaDeg) % 360) + 360) % 360
+    const newRotations = { ...pageRotations, [pageIndex]: newRot }
+    setPageRotations(newRotations)
+
+    try {
+      // docInfo の更新 (幅と高さのスワップなど)
+      const newDocInfo = await getPdfInfo(pdfBytes, newRotations)
+      setDocInfo(newDocInfo)
+
+      // サムネイルとプレビュー画像の再生成
+      const [thumbUrl, mainUrl] = await Promise.all([
+        renderPageImage(pdfBytes, pageIndex, 0.3, newRot),
+        pageIndex === currentPage
+          ? renderPageImage(pdfBytes, pageIndex, 1.5, newRot)
+          : Promise.resolve(null),
+      ])
+
+      setThumbnails((prev) => new Map(prev).set(pageIndex, thumbUrl))
+      if (mainUrl) {
+        setPageImages((prev) => new Map(prev).set(pageIndex, mainUrl))
+      }
+      showToast(`🔄 ページ ${pageIndex + 1} を ${newRot}° に回転しました。`)
+    } catch (err) {
+      console.error('回転プレビュー更新エラー:', err)
+    }
+  }
+
+  // 他のPDFファイルを追加結合（マージ）
+  const handleMergePdfs = async (files: FileList) => {
+    if (!pdfBytes || files.length === 0) return
+    setIsProcessing(true)
+    try {
+      const additionalPdfs: Uint8Array[] = []
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const buf = await file.arrayBuffer()
+        additionalPdfs.push(new Uint8Array(buf))
+      }
+
+      const mergedBytes = await mergePdfFiles(pdfBytes, additionalPdfs)
+      setPdfBytes(mergedBytes)
+
+      // メタ情報としおり情報の更新
+      const [newDocInfo, newBms] = await Promise.all([
+        getPdfInfo(mergedBytes, pageRotations),
+        loadPdfBookmarks(mergedBytes),
+      ])
+      setDocInfo(newDocInfo)
+      setBookmarks(newBms)
+
+      // サムネイル再生成
+      const thumbPromises = newDocInfo.pages.map(async (p) => {
+        const rot = pageRotations[p.index] || 0
+        const thumb = await renderPageImage(mergedBytes, p.index, 0.3, rot)
+        return [p.index, thumb] as [number, string]
+      })
+      const thumbResults = await Promise.all(thumbPromises)
+      setThumbnails(new Map(thumbResults))
+
+      // 現在ページのプレビュー画像も再生成
+      const mainUrl = await renderPageImage(
+        mergedBytes,
+        currentPage,
+        1.5,
+        pageRotations[currentPage] || 0
+      )
+      setPageImages(new Map([[currentPage, mainUrl]]))
+
+      showToast(`📄✨ ${files.length} 件のPDFファイルを結合しました！（全 ${newDocInfo.numPages} ページ）`)
+    } catch (err) {
+      console.error('PDF結合エラー:', err)
+      alert('PDFファイルの結合中にエラーが発生しました。ファイル形式をご確認ください。')
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // 選択ページの抽出保存（分割）
+  const handleExtractPages = async (indices: number[]) => {
+    if (!pdfBytes || indices.length === 0) return
+    setIsProcessing(true)
+    try {
+      const extractedBytes = await extractPages(pdfBytes, indices, pageRotations)
+      const blob = new Blob([extractedBytes as BlobPart], { type: 'application/pdf' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const baseName = fileName ? fileName.replace(/\.pdf$/i, '') : 'document'
+      const pageRangeStr =
+        indices.length <= 5
+          ? `p${indices.map((i) => i + 1).join('-')}`
+          : `${indices.length}pages`
+      a.download = `${baseName}_抽出_${pageRangeStr}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      showToast(`✂️ 選択した ${indices.length} ページを新規PDFとして抽出・保存しました！`)
+    } catch (err) {
+      console.error('ページ抽出エラー:', err)
+      alert('ページの抽出保存中にエラーが発生しました。')
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // ページの削除
+  const handleDeletePage = async (pageIndex: number) => {
+    if (!pdfBytes || !docInfo) return
+    if (docInfo.numPages <= 1) {
+      alert('文書内に1ページしかないため、削除できません。')
+      return
+    }
+
+    if (
+      !window.confirm(
+        `ページ ${pageIndex + 1} を完全に削除しますか？\n（この操作は元に戻せません）`
+      )
+    ) {
+      return
+    }
+
+    setIsProcessing(true)
+    try {
+      const newBytes = await deletePagesFromPdf(pdfBytes, [pageIndex])
+      setPdfBytes(newBytes)
+
+      // インデックスのシフト調整
+      // 1. redactions
+      setRedactions((prev) =>
+        prev
+          .filter((r) => r.pageIndex !== pageIndex)
+          .map((r) => (r.pageIndex > pageIndex ? { ...r, pageIndex: r.pageIndex - 1 } : r))
+      )
+      // 2. drawings
+      setDrawings((prev) =>
+        prev
+          .filter((d) => d.pageIndex !== pageIndex)
+          .map((d) => (d.pageIndex > pageIndex ? { ...d, pageIndex: d.pageIndex - 1 } : d))
+      )
+      // 3. pageRotations
+      const newRotations: Record<number, number> = {}
+      for (const [k, v] of Object.entries(pageRotations)) {
+        const idx = Number(k)
+        if (idx < pageIndex) {
+          newRotations[idx] = v
+        } else if (idx > pageIndex) {
+          newRotations[idx - 1] = v
+        }
+      }
+      setPageRotations(newRotations)
+
+      // 4. selectedPagesForExtract
+      setSelectedPagesForExtract((prev) => {
+        const next = new Set<number>()
+        for (const idx of prev) {
+          if (idx < pageIndex) next.add(idx)
+          else if (idx > pageIndex) next.add(idx - 1)
+        }
+        return next
+      })
+
+      // 新しい docInfo と bookmarks を取得
+      const [newDocInfo, newBms] = await Promise.all([
+        getPdfInfo(newBytes, newRotations),
+        loadPdfBookmarks(newBytes),
+      ])
+      setDocInfo(newDocInfo)
+      setBookmarks(newBms)
+
+      // currentPage の調整
+      const newCurrentPage = Math.min(currentPage, newDocInfo.numPages - 1)
+      setCurrentPage(newCurrentPage)
+
+      // サムネイル再生成
+      const thumbPromises = newDocInfo.pages.map(async (p) => {
+        const rot = newRotations[p.index] || 0
+        const thumb = await renderPageImage(newBytes, p.index, 0.3, rot)
+        return [p.index, thumb] as [number, string]
+      })
+      const thumbResults = await Promise.all(thumbPromises)
+      setThumbnails(new Map(thumbResults))
+
+      // メイン画像再生成
+      const mainUrl = await renderPageImage(
+        newBytes,
+        newCurrentPage,
+        1.5,
+        newRotations[newCurrentPage] || 0
+      )
+      setPageImages(new Map([[newCurrentPage, mainUrl]]))
+
+      showToast(`🗑️ ページ ${pageIndex + 1} を削除しました。（残り ${newDocInfo.numPages} ページ）`)
+    } catch (err) {
+      console.error('ページ削除エラー:', err)
+      alert('ページの削除中にエラーが発生しました。')
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // 抽出用チェックボックス選択の切り替え
+  const handleTogglePageSelectForExtract = (pageIndex: number) => {
+    setSelectedPagesForExtract((prev) => {
+      const next = new Set(prev)
+      if (next.has(pageIndex)) {
+        next.delete(pageIndex)
+      } else {
+        next.add(pageIndex)
+      }
+      return next
+    })
+  }
+
+  const handleSelectAllPagesForExtract = () => {
+    if (!docInfo) return
+    setSelectedPagesForExtract(new Set(docInfo.pages.map((p) => p.index)))
+  }
+
+  const handleClearPageSelectionForExtract = () => {
+    setSelectedPagesForExtract(new Set())
+  }
+
+  // しおり操作
+  const handleAddBookmark = (pageIndex: number, title?: string) => {
+    const newTitle = title || `ページ ${pageIndex + 1}`
+    const newItem: BookmarkItem = {
+      id: `bm_${Date.now()}_${Math.random().toString(36).substr(2, 7)}`,
+      title: newTitle,
+      page: pageIndex,
+      children: [],
+    }
+    setBookmarks((prev) => [...prev, newItem])
+    showToast(`📑 しおり「${newTitle}」を追加しました。`)
+  }
+
+  const handleUpdateBookmark = (id: string, newTitle: string) => {
+    const updateRecursive = (items: BookmarkItem[]): BookmarkItem[] => {
+      return items.map((it) => {
+        if (it.id === id) {
+          return { ...it, title: newTitle }
+        }
+        if (it.children && it.children.length > 0) {
+          return { ...it, children: updateRecursive(it.children) }
+        }
+        return it
+      })
+    }
+    setBookmarks((prev) => updateRecursive(prev))
+    showToast(`📑 しおりを「${newTitle}」に更新しました。`)
+  }
+
+  const handleDeleteBookmark = (id: string) => {
+    const deleteRecursive = (items: BookmarkItem[]): BookmarkItem[] => {
+      return items
+        .filter((it) => it.id !== id)
+        .map((it) => {
+          if (it.children && it.children.length > 0) {
+            return { ...it, children: deleteRecursive(it.children) }
+          }
+          return it
+        })
+    }
+    setBookmarks((prev) => deleteRecursive(prev))
+    showToast('🗑️ しおりを削除しました。')
+  }
+
+  // 墨消し＆描画＆回転＆しおり反映クリーンPDFダウンロード
   const handleSave = async () => {
     if (!pdfBytes) return
 
-    if (redactions.length === 0 && drawings.length === 0) {
-      showToast('⚠️ 消去したい箇所をドラッグ選択するか、描画・校正ツールで追記を行ってください。')
+    const hasRotations =
+      Object.keys(pageRotations).length > 0 &&
+      Object.values(pageRotations).some((r) => r !== 0)
+    const hasBookmarks = bookmarks.length > 0
+
+    if (
+      redactions.length === 0 &&
+      drawings.length === 0 &&
+      !hasRotations &&
+      !hasBookmarks
+    ) {
+      showToast('⚠️ 墨消し、描画、ページ回転、またはしおりの編集を行ってから保存してください。')
       return
     }
 
     setIsProcessing(true)
 
     try {
-      // 物理墨消し ＆ 描画アノテーション合成エンジン実行
-      const cleanBytes = await applyRedactions(pdfBytes, redactions, colorMode, drawings)
+      // 物理墨消し ＆ 描画アノテーション合成 ＆ ページ回転 ＆ しおりツリー埋め込み
+      const cleanBytes = await applyRedactions(
+        pdfBytes,
+        redactions,
+        colorMode,
+        drawings,
+        pageRotations,
+        bookmarks
+      )
 
       // ダウンロードトリガー (安全にBlob化)
       const blob = new Blob([cleanBytes as BlobPart], { type: 'application/pdf' })
@@ -446,12 +756,14 @@ export default function App() {
       const a = document.createElement('a')
       a.href = url
       const baseName = fileName ? fileName.replace(/\.pdf$/i, '') : 'document'
-      const suffix =
-        redactions.length > 0 && drawings.length > 0
-          ? '墨消し・校正済'
-          : redactions.length > 0
-          ? '墨消し済'
-          : '校正済'
+
+      const suffixParts: string[] = []
+      if (redactions.length > 0) suffixParts.push('墨消し')
+      if (drawings.length > 0) suffixParts.push('校正')
+      if (hasRotations) suffixParts.push('回転')
+      if (hasBookmarks) suffixParts.push('しおり')
+      const suffix = suffixParts.length > 0 ? `${suffixParts.join('・')}済` : '保存済'
+
       a.download = `${baseName}_${suffix}.pdf`
       document.body.appendChild(a)
       a.click()
@@ -461,6 +773,9 @@ export default function App() {
       const summaryParts: string[] = []
       if (redactions.length > 0) summaryParts.push(`墨消し${redactions.length}箇所`)
       if (drawings.length > 0) summaryParts.push(`描画・校正${drawings.length}件`)
+      if (hasRotations) summaryParts.push(`ページ回転`)
+      if (hasBookmarks) summaryParts.push(`しおり${bookmarks.length}件`)
+
       showToast(`🎉 【${summaryParts.join(' ＋ ')}】の反映が完了しました！消去箇所以外のテキスト選択・OCR適性は100%保持されています。`)
     } catch (err) {
       console.error('保存処理エラー:', err)
@@ -483,6 +798,9 @@ export default function App() {
       setPdfBytes(null)
       setFileName(null)
       setDocInfo(null)
+      setBookmarks([])
+      setPageRotations({})
+      setSelectedPagesForExtract(new Set())
       setRedactions([])
       setDrawings([])
       setHistory([])
@@ -577,13 +895,26 @@ export default function App() {
 
           {/* メインワークスペース: サムネイル + メインビューア */}
           <div className="flex-1 flex overflow-hidden">
-            {docInfo.numPages > 1 && (
+            {docInfo && (
               <ThumbnailSidebar
                 pages={docInfo.pages}
                 currentPage={currentPage}
                 redactions={redactions}
                 thumbnails={thumbnails}
+                pageRotations={pageRotations}
+                bookmarks={bookmarks}
+                selectedPagesForExtract={selectedPagesForExtract}
                 onSelectPage={setCurrentPage}
+                onRotatePage={handleRotatePage}
+                onDeletePage={handleDeletePage}
+                onMergePdfs={handleMergePdfs}
+                onExtractPages={handleExtractPages}
+                onTogglePageSelectForExtract={handleTogglePageSelectForExtract}
+                onSelectAllPagesForExtract={handleSelectAllPagesForExtract}
+                onClearPageSelectionForExtract={handleClearPageSelectionForExtract}
+                onAddBookmark={handleAddBookmark}
+                onUpdateBookmark={handleUpdateBookmark}
+                onDeleteBookmark={handleDeleteBookmark}
               />
             )}
 

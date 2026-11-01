@@ -1,5 +1,5 @@
 import { GZIPPED_MUPDF_WASM_BASE64 } from './wasmBinary';
-import { DrawingItem } from '../types/drawing';
+import { DrawingItem, BookmarkItem } from '../types/drawing';
 
 let mupdfModule: any = null;
 let initPromise: Promise<any> | null = null;
@@ -22,6 +22,12 @@ async function decompressGzipBase64(base64: string): Promise<Uint8Array> {
   const response = new Response(ds.readable);
   const arrayBuffer = await response.arrayBuffer();
   return new Uint8Array(arrayBuffer);
+}
+
+// Wasm メモリのビューから JS の独立した TypedArray に安全にクローン（Wasmヒープ拡張時の Detached ArrayBuffer を防止）
+function toSafeUint8Array(buf: any): Uint8Array {
+  const u8 = buf.asUint8Array();
+  return new Uint8Array(u8);
 }
 
 export async function getMuPdf() {
@@ -69,9 +75,12 @@ export interface PdfDocumentInfo {
 }
 
 /**
- * PDFのメタ情報取得
+ * PDFのメタ情報取得（ページ回転考慮）
  */
-export async function getPdfInfo(pdfBytes: Uint8Array): Promise<PdfDocumentInfo> {
+export async function getPdfInfo(
+  pdfBytes: Uint8Array,
+  pageRotations: Record<number, number> = {}
+): Promise<PdfDocumentInfo> {
   const m = await getMuPdf();
   const doc = m.Document.openDocument(pdfBytes, 'application/pdf');
   const numPages = doc.countPages();
@@ -80,13 +89,27 @@ export async function getPdfInfo(pdfBytes: Uint8Array): Promise<PdfDocumentInfo>
   for (let i = 0; i < numPages; i++) {
     const page = doc.loadPage(i);
     const bounds = page.getBounds(); // [x0, y0, x1, y1]
-    const w = Math.abs(bounds[2] - bounds[0]);
-    const h = Math.abs(bounds[3] - bounds[1]);
+    let baseRot = 0;
+    try {
+      const rotObj = page.getObject().get('Rotate');
+      if (rotObj && !rotObj.isNull()) {
+        baseRot = rotObj.asNumber() || 0;
+      }
+    } catch {}
+
+    const offsetRot = pageRotations[i] || 0;
+    const effectiveRot = (((baseRot + offsetRot) % 360) + 360) % 360;
+
+    const rawW = Math.abs(bounds[2] - bounds[0]);
+    const rawH = Math.abs(bounds[3] - bounds[1]);
+
+    // 90度または270度回転のときは幅と高さを入れ替える
+    const isSideways = effectiveRot === 90 || effectiveRot === 270;
     pages.push({
       index: i,
-      width: w,
-      height: h,
-      rotation: 0,
+      width: isSideways ? rawH : rawW,
+      height: isSideways ? rawW : rawH,
+      rotation: effectiveRot,
     });
   }
 
@@ -94,24 +117,138 @@ export async function getPdfInfo(pdfBytes: Uint8Array): Promise<PdfDocumentInfo>
 }
 
 /**
- * ページのプレビュー画像を生成 (PNG Data URL)
+ * ページのプレビュー画像を生成 (PNG Data URL / ページ回転対応)
  */
 export async function renderPageImage(
   pdfBytes: Uint8Array,
   pageIndex: number,
-  scale: number = 1.5
+  scale: number = 1.5,
+  rotationOffset: number = 0
 ): Promise<string> {
   const m = await getMuPdf();
   const doc = m.Document.openDocument(pdfBytes, 'application/pdf');
   const page = doc.loadPage(pageIndex);
 
+  if (rotationOffset !== 0) {
+    let baseRot = 0;
+    try {
+      const rotObj = page.getObject().get('Rotate');
+      if (rotObj && !rotObj.isNull()) baseRot = rotObj.asNumber() || 0;
+    } catch {}
+    const newRot = (((baseRot + rotationOffset) % 360) + 360) % 360;
+    page.getObject().put('Rotate', doc.newInteger(newRot));
+  }
+
   const matrix = m.Matrix.scale(scale, scale);
   const pixmap = page.toPixmap(matrix, m.ColorSpace.DeviceRGB, false);
   const pngBytes = pixmap.asPNG();
 
-  // Blob URL 生成
   const blob = new Blob([pngBytes.buffer as ArrayBuffer], { type: 'image/png' });
   return URL.createObjectURL(blob);
+}
+
+/**
+ * 既存PDFのアウトライン（しおり）ツリーを取得
+ */
+export async function loadPdfBookmarks(pdfBytes: Uint8Array): Promise<BookmarkItem[]> {
+  const m = await getMuPdf();
+  const doc = m.Document.openDocument(pdfBytes, 'application/pdf');
+  const outline = doc.loadOutline();
+  if (!outline || outline.length === 0) return [];
+
+  let idCounter = 1;
+  const convertItems = (items: any[]): BookmarkItem[] => {
+    return items.map((it) => {
+      const item: BookmarkItem = {
+        id: `bm_${idCounter++}_${Date.now()}`,
+        title: it.title || '無題のしおり',
+        page: typeof it.page === 'number' ? it.page : 0,
+        isOpen: it.open ?? true,
+      };
+      if (it.down && it.down.length > 0) {
+        item.children = convertItems(it.down);
+      }
+      return item;
+    });
+  };
+
+  return convertItems(outline);
+}
+
+/**
+ * 複数のPDFファイルを1つに結合（マージ）
+ */
+export async function mergePdfFiles(
+  basePdfBytes: Uint8Array,
+  additionalPdfs: Uint8Array[]
+): Promise<Uint8Array> {
+  const m = await getMuPdf();
+  const targetDoc = m.Document.openDocument(basePdfBytes, 'application/pdf');
+
+  for (const extraBytes of additionalPdfs) {
+    const srcDoc = m.Document.openDocument(extraBytes, 'application/pdf');
+    const srcPageCount = srcDoc.countPages();
+    for (let i = 0; i < srcPageCount; i++) {
+      targetDoc.graftPage(targetDoc.countPages(), srcDoc, i);
+    }
+  }
+
+  return toSafeUint8Array(targetDoc.saveToBuffer('clean,garbage'));
+}
+
+/**
+ * 指定ページだけを抽出して新しいPDFを生成（分割・抽出）
+ */
+export async function extractPages(
+  pdfBytes: Uint8Array,
+  pageIndices: number[],
+  pageRotations: Record<number, number> = {}
+): Promise<Uint8Array> {
+  const m = await getMuPdf();
+  const srcDoc = m.Document.openDocument(pdfBytes, 'application/pdf');
+  const newDoc = new m.PDFDocument();
+
+  const sorted = [...pageIndices].sort((a, b) => a - b);
+  for (let i = 0; i < sorted.length; i++) {
+    const pageIdx = sorted[i];
+    if (pageIdx >= 0 && pageIdx < srcDoc.countPages()) {
+      newDoc.graftPage(newDoc.countPages(), srcDoc, pageIdx);
+      const rot = pageRotations[pageIdx] || 0;
+      if (rot !== 0) {
+        const lastPage = newDoc.loadPage(newDoc.countPages() - 1);
+        let baseRot = 0;
+        try {
+          const rotObj = lastPage.getObject().get('Rotate');
+          if (rotObj && !rotObj.isNull()) baseRot = rotObj.asNumber() || 0;
+        } catch {}
+        const finalRot = (((baseRot + rot) % 360) + 360) % 360;
+        lastPage.getObject().put('Rotate', newDoc.newInteger(finalRot));
+      }
+    }
+  }
+
+  return toSafeUint8Array(newDoc.saveToBuffer('clean,garbage'));
+}
+
+/**
+ * 指定ページを削除したPDFを生成
+ */
+export async function deletePagesFromPdf(
+  pdfBytes: Uint8Array,
+  pageIndicesToDelete: number[]
+): Promise<Uint8Array> {
+  const m = await getMuPdf();
+  const doc = m.Document.openDocument(pdfBytes, 'application/pdf');
+
+  // 降順でインデックスを削除（インデックスずれ防止）
+  const descIndices = [...new Set(pageIndicesToDelete)].sort((a, b) => b - a);
+  for (const idx of descIndices) {
+    if (idx >= 0 && idx < doc.countPages()) {
+      doc.deletePage(idx);
+    }
+  }
+
+  return toSafeUint8Array(doc.saveToBuffer('clean,garbage'));
 }
 
 /**
@@ -218,15 +355,97 @@ function hexToRgb(hex: string): [number, number, number] {
 }
 
 /**
+ * しおり（目次）ツリーをPDFディクショナリとして構築するヘルパー
+ */
+function buildOutlinesDict(doc: any, bookmarks: BookmarkItem[]): any {
+  if (!bookmarks || bookmarks.length === 0) return null;
+
+  const outlinesRef = doc.createObject();
+  const outlinesDict = doc.newDictionary();
+  outlinesDict.put('Type', doc.newName('Outlines'));
+
+  const buildItems = (
+    items: BookmarkItem[],
+    parentRef: any
+  ): { first: any; last: any; count: number } => {
+    let firstRef: any = null;
+    let lastRef: any = null;
+    let prevRef: any = null;
+    let prevDict: any = null;
+    let totalCount = 0;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const itemRef = doc.createObject();
+      const itemDict = doc.newDictionary();
+
+      if (!firstRef) firstRef = itemRef;
+      lastRef = itemRef;
+
+      itemDict.put('Title', doc.newString(item.title));
+      itemDict.put('Parent', parentRef);
+
+      if (prevRef && prevDict) {
+        prevDict.put('Next', itemRef);
+        itemDict.put('Prev', prevRef);
+      }
+
+      // リンク先ページ [pageObj /Fit]
+      const pageIdx = Math.max(0, Math.min(doc.countPages() - 1, item.page));
+      const pageObj = doc.loadPage(pageIdx).getObject();
+      const dest = doc.newArray();
+      dest.push(pageObj);
+      dest.push(doc.newName('Fit'));
+      itemDict.put('Dest', dest);
+
+      totalCount++;
+
+      if (item.children && item.children.length > 0) {
+        const sub = buildItems(item.children, itemRef);
+        if (sub.first) {
+          itemDict.put('First', sub.first);
+          itemDict.put('Last', sub.last);
+          itemDict.put('Count', doc.newInteger(sub.count));
+          totalCount += sub.count;
+        }
+      }
+
+      if (prevRef && prevDict) {
+        prevRef.writeObject(prevDict);
+      }
+      prevRef = itemRef;
+      prevDict = itemDict;
+    }
+
+    if (prevRef && prevDict) {
+      prevRef.writeObject(prevDict);
+    }
+
+    return { first: firstRef, last: lastRef, count: totalCount };
+  };
+
+  const rootResult = buildItems(bookmarks, outlinesRef);
+  if (rootResult.first) {
+    outlinesDict.put('First', rootResult.first);
+    outlinesDict.put('Last', rootResult.last);
+    outlinesDict.put('Count', doc.newInteger(rootResult.count));
+    outlinesRef.writeObject(outlinesDict);
+    return outlinesRef;
+  }
+  return null;
+}
+
+/**
  * 完全不可逆墨消し（Redaction）および描画・校正オブジェクトの合成実行
- * 選択範囲内のテキストストリーム・画像・オブジェクトを物理削除し、
- * その上に赤書・文字・囲み等のベクター注釈を高精度に合成したクリーンPDFを生成する
+ * ページ回転・しおりツリーの更新も統合してクリーンPDFを生成する
  */
 export async function applyRedactions(
   pdfBytes: Uint8Array,
   redactions: RedactRect[],
   defaultColor: 'black' | 'white' = 'black',
-  drawings: DrawingItem[] = []
+  drawings: DrawingItem[] = [],
+  pageRotations: Record<number, number> = {},
+  bookmarks: BookmarkItem[] = []
 ): Promise<Uint8Array> {
   const m = await getMuPdf();
   const doc = m.Document.openDocument(pdfBytes, 'application/pdf');
@@ -246,15 +465,29 @@ export async function applyRedactions(
     drawPageMap.set(d.pageIndex, list);
   }
 
-  // 各ページの処理（物理墨消し切除 ＆ 墨消し矩形・描画オブジェクトのContents直接ベイク）
+  // 各ページの処理（ページ回転・物理墨消し切除 ＆ 墨消し矩形・描画オブジェクトのContents直接ベイク）
   for (let i = 0; i < numPages; i++) {
     const rectList = redactPageMap.get(i) || [];
     const drawList = drawPageMap.get(i) || [];
+    const hasRotation = !!pageRotations[i];
 
-    if (rectList.length === 0 && drawList.length === 0) continue;
+    if (rectList.length === 0 && drawList.length === 0 && !hasRotation) continue;
 
     const page = doc.loadPage(i);
     const pageObj = page.getObject();
+
+    // ページの回転を適用
+    if (hasRotation) {
+      let baseRot = 0;
+      try {
+        const rotObj = pageObj.get('Rotate');
+        if (rotObj && !rotObj.isNull()) baseRot = rotObj.asNumber() || 0;
+      } catch {}
+      const finalRot = (((baseRot + pageRotations[i]) % 360) + 360) % 360;
+      pageObj.put('Rotate', doc.newInteger(finalRot));
+    }
+
+    if (rectList.length === 0 && drawList.length === 0) continue;
     const bounds = page.getBounds();
 
     // 画面座標 (左上原点) から PDF 座標 (左下原点) への変換ヘルパー
@@ -529,7 +762,21 @@ export async function applyRedactions(
     }
   }
 
+  // 5. 編集されたしおりツリーをPDFの /Root/Outlines に反映
+  if (bookmarks && bookmarks.length > 0) {
+    try {
+      const outlinesRef = buildOutlinesDict(doc, bookmarks);
+      if (outlinesRef) {
+        const trailer = doc.getTrailer();
+        const root = trailer.get('Root');
+        root.put('Outlines', outlinesRef);
+      }
+    } catch (err) {
+      console.error('Failed to write bookmarks to PDF:', err);
+    }
+  }
+
   // クリーンなPDFとして保存 (不要オブジェクト・切り取られたストリームの完全ガベージコレクション)
-  const cleanDocBytes = doc.saveToBuffer('clean,garbage').asUint8Array();
+  const cleanDocBytes = toSafeUint8Array(doc.saveToBuffer('clean,garbage'));
   return cleanDocBytes;
 }
