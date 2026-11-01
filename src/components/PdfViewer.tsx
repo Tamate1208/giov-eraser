@@ -341,15 +341,193 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   const [hoveredDrawingId, setHoveredDrawingId] = useState<string | null>(null)
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null)
 
-  // 描画アイテムクリック処理（描画消しゴムツール時は即座に削除）
-  const handleItemClick = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (appMode === 'draw' && activeTool === 'draw_eraser') {
-      onRemoveDrawing(id)
-      if (selectedDrawingId === id) setSelectedDrawingId(null)
+  // オブジェクト（描画アイテム）の寸法・面積を自動計測
+  const handleMeasureDrawing = (item: DrawingItem) => {
+    if (!pageInfo) return
+
+    // 1. 直線 / 矢印: 長さと角度を計測
+    if (item.tool === 'line' || item.tool === 'arrow') {
+      if (!item.points || item.points.length < 2) return
+      const p0 = item.points[0]
+      const p1 = item.points[1]
+      const x1 = p0.x * 1.5
+      const y1 = p0.y * 1.5
+      const x2 = p1.x * 1.5
+      const y2 = p1.y * 1.5
+      const dx = x2 - x1
+      const dy = y2 - y1
+      const len = Math.hypot(dx, dy)
+      if (len < 1) return
+
+      const distPt = len / 1.5
+      const distMm = distPt * (25.4 / 72)
+      let angleDeg = Math.round((Math.atan2(dy, dx) * 180) / Math.PI)
+      if (angleDeg < 0) angleDeg += 360
+
+      const { realStr } = formatRealDistance(distMm, rulerScale)
+
+      setRulerResult({
+        type: 'distance',
+        scale: rulerScale,
+        x1,
+        y1,
+        x2,
+        y2,
+        distMm,
+        realLengthStr: realStr,
+        angleDeg,
+      })
       return
     }
-    setSelectedDrawingId(id)
+
+    // 2. 矩形: 縦横寸法・外周長・面積を計測
+    if (item.tool === 'rect') {
+      if (item.x === undefined || item.y === undefined || item.w === undefined || item.h === undefined) return
+      const rx = item.x * 1.5
+      const ry = item.y * 1.5
+      const rw = Math.abs(item.w * 1.5)
+      const rh = Math.abs(item.h * 1.5)
+      if (rw < 1 || rh < 1) return
+
+      const wMm = (rw / 1.5) * (25.4 / 72)
+      const hMm = (rh / 1.5) * (25.4 / 72)
+      const areaMm2 = wMm * hMm
+      const perimeterMm = 2 * (wMm + hMm)
+
+      const { realAreaStr, realPerimeterStr } = formatRealArea(areaMm2, perimeterMm, rulerScale)
+
+      const pts: Point[] = [
+        { x: rx, y: ry },
+        { x: rx + rw, y: ry },
+        { x: rx + rw, y: ry + rh },
+        { x: rx, y: ry + rh },
+      ]
+
+      setRulerResult({
+        type: 'area',
+        scale: rulerScale,
+        points: pts,
+        areaMm2,
+        realAreaStr,
+        realPerimeterStr,
+        center: { x: rx + rw / 2, y: ry + rh / 2 },
+      })
+      return
+    }
+
+    // 3. 円・楕円: 半径・外周長・面積を計測
+    if (item.tool === 'circle') {
+      if (item.x === undefined || item.y === undefined || item.w === undefined || item.h === undefined) return
+      const cx = (item.x + item.w / 2) * 1.5
+      const cy = (item.y + item.h / 2) * 1.5
+      const rx = Math.abs((item.w / 2) * 1.5)
+      const ry = Math.abs((item.h / 2) * 1.5)
+      if (rx < 1 || ry < 1) return
+
+      const rxMm = (rx / 1.5) * (25.4 / 72)
+      const ryMm = (ry / 1.5) * (25.4 / 72)
+      const areaMm2 = Math.PI * rxMm * ryMm
+      const h = Math.pow(rxMm - ryMm, 2) / Math.pow(rxMm + ryMm, 2)
+      const perimeterMm = Math.PI * (rxMm + ryMm) * (1 + (3 * h) / (10 + Math.sqrt(4 - 3 * h)))
+
+      const { realAreaStr, realPerimeterStr } = formatRealArea(areaMm2, perimeterMm, rulerScale)
+
+      const pts: Point[] = []
+      const steps = 36
+      for (let i = 0; i < steps; i++) {
+        const theta = (i / steps) * 2 * Math.PI
+        pts.push({
+          x: cx + rx * Math.cos(theta),
+          y: cy + ry * Math.sin(theta),
+        })
+      }
+
+      setRulerResult({
+        type: 'area',
+        scale: rulerScale,
+        points: pts,
+        areaMm2,
+        realAreaStr,
+        realPerimeterStr,
+        center: { x: cx, y: cy },
+      })
+      return
+    }
+
+    // 4. 多角形: 各辺外周長・面積を計測
+    if (item.tool === 'polygon') {
+      if (!item.points || item.points.length < 3) return
+      const ptsInPt = item.points
+      const areaPt2 = calculatePolygonAreaPt(ptsInPt)
+      const perimeterPt = calculatePolygonPerimeterPt(ptsInPt)
+      const centerPt = calculatePolygonCentroid(ptsInPt)
+
+      const areaMm2 = areaPt2 * Math.pow(25.4 / 72, 2)
+      const perimeterMm = perimeterPt * (25.4 / 72)
+
+      const { realAreaStr, realPerimeterStr } = formatRealArea(areaMm2, perimeterMm, rulerScale)
+
+      const screenPts = ptsInPt.map((p) => ({ x: p.x * 1.5, y: p.y * 1.5 }))
+
+      setRulerResult({
+        type: 'area',
+        scale: rulerScale,
+        points: screenPts,
+        areaMm2,
+        realAreaStr,
+        realPerimeterStr,
+        center: { x: centerPt.x * 1.5, y: centerPt.y * 1.5 },
+      })
+      return
+    }
+  }
+
+  // 墨消し枠（不可逆マスク枠）の寸法・面積を自動計測
+  const handleMeasureRedaction = (r: RedactRect) => {
+    if (!pageInfo) return
+    const rx = Math.min(r.x0, r.x1) * 1.5
+    const ry = Math.min(r.y0, r.y1) * 1.5
+    const rw = Math.abs(r.x1 - r.x0) * 1.5
+    const rh = Math.abs(r.y1 - r.y0) * 1.5
+    if (rw < 1 || rh < 1) return
+
+    const wMm = (rw / 1.5) * (25.4 / 72)
+    const hMm = (rh / 1.5) * (25.4 / 72)
+    const areaMm2 = wMm * hMm
+    const perimeterMm = 2 * (wMm + hMm)
+
+    const { realAreaStr, realPerimeterStr } = formatRealArea(areaMm2, perimeterMm, rulerScale)
+
+    const pts: Point[] = [
+      { x: rx, y: ry },
+      { x: rx + rw, y: ry },
+      { x: rx + rw, y: ry + rh },
+      { x: rx, y: ry + rh },
+    ]
+
+    setRulerResult({
+      type: 'area',
+      scale: rulerScale,
+      points: pts,
+      areaMm2,
+      realAreaStr,
+      realPerimeterStr,
+      center: { x: rx + rw / 2, y: ry + rh / 2 },
+    })
+  }
+
+  // 描画アイテムクリック処理（描画消しゴム時は即座に削除、物差し/選択ツール時は自動計測）
+  const handleItemClick = (item: DrawingItem, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (appMode === 'draw' && activeTool === 'draw_eraser') {
+      onRemoveDrawing(item.id)
+      if (selectedDrawingId === item.id) setSelectedDrawingId(null)
+      return
+    }
+    setSelectedDrawingId(item.id)
+    if (appMode === 'draw' && (activeTool === 'ruler' || activeTool === 'select')) {
+      handleMeasureDrawing(item)
+    }
   }
 
   // 描画アイテム上でのポインターダウン処理（ドラッグ移動の開始）
@@ -834,10 +1012,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       let textRot = angleDeg
       if (textRot > 90 && textRot <= 270) textRot -= 180
 
-      const textLabel =
-        rulerScale > 1
-          ? `${realLengthStr} (1:${rulerScale})`
-          : `${distMm.toFixed(1)} mm`
+      const textLabel = realLengthStr || `${distMm.toFixed(1)} mm`
 
       onAddDrawing({
         pageIndex: pageInfo.index,
@@ -868,10 +1043,9 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
 
       // 2. 重心に面積テキストラベルを注記
       const c = center || { x: 0, y: 0 }
-      const textLabel =
-        rulerScale > 1
-          ? `S=${realAreaStr} (L=${realPerimeterStr} / 1:${rulerScale})`
-          : `S=${realAreaStr}`
+      const textLabel = realPerimeterStr
+        ? `S=${realAreaStr} (L=${realPerimeterStr})`
+        : `S=${realAreaStr}`
 
       onAddDrawing({
         pageIndex: pageInfo.index,
@@ -1373,6 +1547,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
               const isHovered = hoveredDrawingId === item.id
               const isSelected = selectedDrawingId === item.id
               const isEraserMode = appMode === 'draw' && activeTool === 'draw_eraser'
+              const isRulerMode = appMode === 'draw' && activeTool === 'ruler'
 
               if (item.tool === 'arrow' || item.tool === 'line') {
                 if (!item.points || item.points.length < 2) return null
@@ -1394,17 +1569,34 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     className={`pointer-events-auto group ${
                       isEraserMode
                         ? 'cursor-pointer hover:opacity-60'
+                        : isRulerMode
+                        ? 'cursor-crosshair'
                         : activeTool === 'select' || isSelected
                         ? 'cursor-move'
                         : 'cursor-pointer'
                     }`}
                     onPointerDown={(e) => handleItemPointerDown(item, e)}
-                    onClick={(e) => handleItemClick(item.id, e)}
+                    onClick={(e) => handleItemClick(item, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
+                    {isRulerMode && <title>クリックしてこの直線の長さを自動計測</title>}
+                    {isEraserMode && <title>クリックして削除</title>}
+                    {/* 物差しホバー時のエメラルドハイライト */}
+                    {isRulerMode && isHovered && (
+                      <line
+                        x1={x1}
+                        y1={y1}
+                        x2={x2}
+                        y2={y2}
+                        stroke="#10b981"
+                        strokeWidth={item.lineWidth + 8}
+                        strokeOpacity="0.7"
+                        strokeLinecap="round"
+                      />
+                    )}
                     {/* 選択時の外枠ハイライト または 消しゴムホバー時の赤ハイライト */}
-                    {isSelected && !isEraserMode && (
+                    {isSelected && !isEraserMode && !isRulerMode && (
                       <line
                         x1={x1}
                         y1={y1}
@@ -1501,16 +1693,35 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     className={`pointer-events-auto group ${
                       isEraserMode
                         ? 'cursor-pointer hover:opacity-60'
+                        : isRulerMode
+                        ? 'cursor-crosshair'
                         : activeTool === 'select' || isSelected
                         ? 'cursor-move'
                         : 'cursor-pointer'
                     }`}
                     onPointerDown={(e) => handleItemPointerDown(item, e)}
-                    onClick={(e) => handleItemClick(item.id, e)}
+                    onClick={(e) => handleItemClick(item, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
-                    {isSelected && !isEraserMode && (
+                    {isRulerMode && <title>クリックしてこの矩形の面積・寸法を自動計測</title>}
+                    {isEraserMode && <title>クリックして削除</title>}
+                    {/* 物差しホバー時のエメラルドハイライト */}
+                    {isRulerMode && isHovered && (
+                      <rect
+                        x={rx - 4}
+                        y={ry - 4}
+                        width={rw + 8}
+                        height={rh + 8}
+                        fill="#10b981"
+                        fillOpacity="0.15"
+                        stroke="#10b981"
+                        strokeWidth="2.5"
+                        strokeDasharray="4 2"
+                        rx="4"
+                      />
+                    )}
+                    {isSelected && !isEraserMode && !isRulerMode && (
                       <rect
                         x={rx - 4}
                         y={ry - 4}
@@ -1595,16 +1806,34 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     className={`pointer-events-auto group ${
                       isEraserMode
                         ? 'cursor-pointer hover:opacity-60'
+                        : isRulerMode
+                        ? 'cursor-crosshair'
                         : activeTool === 'select' || isSelected
                         ? 'cursor-move'
                         : 'cursor-pointer'
                     }`}
                     onPointerDown={(e) => handleItemPointerDown(item, e)}
-                    onClick={(e) => handleItemClick(item.id, e)}
+                    onClick={(e) => handleItemClick(item, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
-                    {isSelected && !isEraserMode && (
+                    {isRulerMode && <title>クリックしてこの円の面積・寸法を自動計測</title>}
+                    {isEraserMode && <title>クリックして削除</title>}
+                    {/* 物差しホバー時のエメラルドハイライト */}
+                    {isRulerMode && isHovered && (
+                      <ellipse
+                        cx={cx}
+                        cy={cy}
+                        rx={rx + 4}
+                        ry={ry + 4}
+                        fill="#10b981"
+                        fillOpacity="0.15"
+                        stroke="#10b981"
+                        strokeWidth="2.5"
+                        strokeDasharray="4 2"
+                      />
+                    )}
+                    {isSelected && !isEraserMode && !isRulerMode && (
                       <ellipse
                         cx={cx}
                         cy={cy}
@@ -1687,16 +1916,31 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     className={`pointer-events-auto group ${
                       isEraserMode
                         ? 'cursor-pointer hover:opacity-60'
+                        : isRulerMode
+                        ? 'cursor-crosshair'
                         : activeTool === 'select' || isSelected
                         ? 'cursor-move'
                         : 'cursor-pointer'
                     }`}
                     onPointerDown={(e) => handleItemPointerDown(item, e)}
-                    onClick={(e) => handleItemClick(item.id, e)}
+                    onClick={(e) => handleItemClick(item, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
-                    {isSelected && !isEraserMode && (
+                    {isRulerMode && <title>クリックしてこの多角形の面積・周長を自動計測</title>}
+                    {isEraserMode && <title>クリックして削除</title>}
+                    {/* 物差しホバー時のエメラルドハイライト */}
+                    {isRulerMode && isHovered && (
+                      <polygon
+                        points={pts}
+                        fill="#10b981"
+                        fillOpacity="0.15"
+                        stroke="#10b981"
+                        strokeWidth={item.lineWidth + 6}
+                        strokeOpacity="0.8"
+                      />
+                    )}
+                    {isSelected && !isEraserMode && !isRulerMode && (
                       <polygon
                         points={pts}
                         fill="none"
@@ -1767,7 +2011,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                         : 'cursor-pointer'
                     }`}
                     onPointerDown={(e) => handleItemPointerDown(item, e)}
-                    onClick={(e) => handleItemClick(item.id, e)}
+                    onClick={(e) => handleItemClick(item, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
@@ -1855,7 +2099,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                         : 'cursor-pointer'
                     }`}
                     onPointerDown={(e) => handleItemPointerDown(item, e)}
-                    onClick={(e) => handleItemClick(item.id, e)}
+                    onClick={(e) => handleItemClick(item, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
@@ -2171,14 +2415,13 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                         {(() => {
                           const distMmNum = parseFloat(distMm)
                           const { realStr } = formatRealDistance(distMmNum, rulerScale)
-                          const label =
-                            rulerScale > 1 ? `${realStr} (用紙${distMm}mm)` : `${distMm} mm`
+                          const label = realStr
                           return (
                             <>
                               <rect
-                                x="-70"
+                                x="-55"
                                 y="-11"
-                                width="140"
+                                width="110"
                                 height="22"
                                 rx="4"
                                 fill="#0f172a"
@@ -2423,15 +2666,12 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                           <span className="text-sm font-bold text-emerald-300 font-mono tracking-tight">
                             {rulerResult.realLengthStr}
                           </span>
-                          {rulerResult.scale > 1 && (
-                            <span className="text-[10px] text-slate-400 font-mono">
-                              (用紙 {rulerResult.distMm?.toFixed(1)} mm)
-                            </span>
-                          )}
                         </div>
-                        <div className="text-[10px] text-slate-400 font-mono">
-                          縮尺 1:{rulerResult.scale} ｜ 角度: {rulerResult.angleDeg}°
-                        </div>
+                        {rulerResult.angleDeg !== undefined && (
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            角度: {rulerResult.angleDeg}°
+                          </div>
+                        )}
                       </>
                     ) : (
                       <>
@@ -2440,9 +2680,11 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                             {rulerResult.realAreaStr}
                           </span>
                         </div>
-                        <div className="text-[10px] text-slate-400 font-mono">
-                          周長: {rulerResult.realPerimeterStr} ｜ 縮尺 1:{rulerResult.scale}
-                        </div>
+                        {rulerResult.realPerimeterStr && (
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            周長: {rulerResult.realPerimeterStr}
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
@@ -2559,12 +2801,28 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
             {redactions.map((r) => {
               const style = getScreenStyle(r)
               const isWhite = r.color === 'white'
+              const isRulerMode = appMode === 'draw' && activeTool === 'ruler'
 
               return (
                 <div
                   key={r.id}
                   style={style}
+                  onClick={(e) => {
+                    if (isRulerMode) {
+                      e.stopPropagation()
+                      handleMeasureRedaction(r)
+                    }
+                  }}
+                  title={
+                    isRulerMode
+                      ? 'クリックしてこの墨消し枠の面積・寸法を自動計測'
+                      : undefined
+                  }
                   className={`absolute pointer-events-auto group border transition-all duration-100 ${
+                    isRulerMode
+                      ? 'cursor-crosshair hover:ring-2 hover:ring-emerald-400 hover:border-emerald-400'
+                      : ''
+                  } ${
                     isWhite
                       ? 'bg-white/85 border-slate-300 ring-1 ring-white/50 shadow-sm'
                       : 'bg-black/90 border-rose-500/80 ring-1 ring-black/50 shadow-md'
