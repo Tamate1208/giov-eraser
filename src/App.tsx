@@ -43,6 +43,7 @@ export default function App() {
   const [docInfo, setDocInfo] = useState<PdfDocumentInfo | null>(null)
   const [currentPage, setCurrentPage] = useState<number>(0)
   const [zoom, setZoom] = useState<number>(1.0)
+  const [resetViewTrigger, setResetViewTrigger] = useState<number>(0)
   const [colorMode, setColorMode] = useState<'black' | 'white'>('black')
   const [selectMode, setSelectMode] = useState<'text' | 'rect'>('text')
   const [redactions, setRedactions] = useState<RedactRect[]>([])
@@ -900,6 +901,7 @@ export default function App() {
             rulerMeasureMode={rulerMeasureMode}
             onRulerMeasureModeChange={setRulerMeasureMode}
             onUndo={handleUndo}
+            onResetView={() => setResetViewTrigger(Date.now())}
           />
 
           {/* メインワークスペース: サムネイル + メインビューア */}
@@ -944,6 +946,7 @@ export default function App() {
               drawings={currentPageDrawings}
               rulerScale={rulerScale}
               rulerMeasureMode={rulerMeasureMode}
+              resetViewTrigger={resetViewTrigger}
               onZoomChange={setZoom}
               onAddRedaction={handleAddRedaction}
               onRemoveRedaction={handleRemoveRedaction}

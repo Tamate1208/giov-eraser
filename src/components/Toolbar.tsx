@@ -55,6 +55,7 @@ interface ToolbarProps {
   // ハンドラ
   onPageChange: (newPage: number) => void;
   onZoomChange: (newZoom: number) => void;
+  onResetView?: () => void;
   onColorModeChange: (mode: 'black' | 'white') => void;
   onSelectModeChange: (mode: 'text' | 'rect') => void;
   onClearPageRedactions: () => void;
@@ -108,6 +109,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onRulerMeasureModeChange,
   onPageChange,
   onZoomChange,
+  onResetView,
   onColorModeChange,
   onSelectModeChange,
   onClearPageRedactions,
@@ -210,10 +212,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               <ZoomIn className="w-4 h-4" />
             </button>
             <button
-              onClick={() => onZoomChange(1.0)}
-              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-400 font-medium cursor-pointer"
+              onClick={() => {
+                onZoomChange(1.0)
+                onResetView?.()
+              }}
+              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-400 hover:text-white font-medium cursor-pointer transition"
+              title="100%（原寸）に戻し、位置を中央にリセット"
             >
-              100%
+              100% (中央)
             </button>
           </div>
         </div>

@@ -201,6 +201,7 @@ interface PdfViewerProps {
   rulerMeasureMode?: RulerMeasureMode;
   // ハンドラ
   onZoomChange?: (newZoom: number) => void;
+  resetViewTrigger?: number;
   onAddRedaction: (rect: Omit<RedactRect, 'id'>) => void;
   onRemoveRedaction: (id: string) => void;
   onAddDrawing: (item: Omit<DrawingItem, 'id'>) => void;
@@ -226,6 +227,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   rulerScale = 100,
   rulerMeasureMode = 'distance',
   onZoomChange,
+  resetViewTrigger,
   onAddRedaction,
   onRemoveRedaction,
   onAddDrawing,
@@ -240,12 +242,25 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   const dragStartRef = useRef<{ x: number; y: number } | null>(null)
   const dragCurrentRef = useRef<{ x: number; y: number } | null>(null)
 
-  // スペースキー押下状態 ＆ マウスパン移動（画面スクロール）用の state / ref
+  // スペースキー押下状態 ＆ キャンバス移動（ダイレクトパン）用の state / ref
   const [isSpacePressed, setIsSpacePressed] = useState(false)
   const [isPanning, setIsPanning] = useState(false)
   const isPanningRef = useRef(false)
   const panStartRef = useRef<{ x: number; y: number } | null>(null)
-  const scrollStartRef = useRef<{ left: number; top: number } | null>(null)
+
+  // 用紙のダイレクトパン位置（画面中央からのオフセット x, y）
+  const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  const panOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  const panOffsetStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+
+  useEffect(() => {
+    panOffsetRef.current = panOffset
+  }, [panOffset])
+
+  // ページ切り替え時または「100%(中央)」ボタン押下時に位置を画面中央にリセット
+  useEffect(() => {
+    setPanOffset({ x: 0, y: 0 })
+  }, [pageInfo?.index, resetViewTrigger])
 
   // プレビュー表示用の state
   const [dragPreview, setDragPreview] = useState<{
@@ -732,25 +747,22 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         e.preventDefault()
 
         const rect = container.getBoundingClientRect()
-        const mouseX = e.clientX - rect.left
-        const mouseY = e.clientY - rect.top
+        const cx = rect.width / 2
+        const cy = rect.height / 2
+        const mouseRelX = e.clientX - rect.left - cx
+        const mouseRelY = e.clientY - rect.top - cy
 
         const zoomDelta = e.deltaY < 0 ? 1.15 : 0.87
         const newZoom = Math.min(5.0, Math.max(0.2, Math.round(zoom * zoomDelta * 100) / 100))
 
         if (newZoom !== zoom) {
-          const scrollX = container.scrollLeft
-          const scrollY = container.scrollTop
+          const r = newZoom / zoom
+          const currentPan = panOffsetRef.current
+          const newPanX = currentPan.x + (1 - r) * (mouseRelX - currentPan.x)
+          const newPanY = currentPan.y + (1 - r) * (mouseRelY - currentPan.y)
 
-          const newScrollLeft = (scrollX + mouseX) * (newZoom / zoom) - mouseX
-          const newScrollTop = (scrollY + mouseY) * (newZoom / zoom) - mouseY
-
+          setPanOffset({ x: newPanX, y: newPanY })
           onZoomChange(newZoom)
-
-          requestAnimationFrame(() => {
-            container.scrollLeft = newScrollLeft
-            container.scrollTop = newScrollTop
-          })
         }
       }
     }
@@ -955,12 +967,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       isPanningRef.current = true
       setIsPanning(true)
       panStartRef.current = { x: e.clientX, y: e.clientY }
-      if (containerRef.current) {
-        scrollStartRef.current = {
-          left: containerRef.current.scrollLeft,
-          top: containerRef.current.scrollTop,
-        }
-      }
+      panOffsetStartRef.current = { ...panOffsetRef.current }
       return
     }
 
@@ -1060,17 +1067,14 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     if (!pageInfo || !overlayRef.current) return
 
     // パン移動中の処理
-    if (
-      isPanningRef.current &&
-      panStartRef.current &&
-      scrollStartRef.current &&
-      containerRef.current
-    ) {
+    if (isPanningRef.current && panStartRef.current) {
       e.preventDefault()
       const dx = e.clientX - panStartRef.current.x
       const dy = e.clientY - panStartRef.current.y
-      containerRef.current.scrollLeft = scrollStartRef.current.left - dx
-      containerRef.current.scrollTop = scrollStartRef.current.top - dy
+      setPanOffset({
+        x: panOffsetStartRef.current.x + dx,
+        y: panOffsetStartRef.current.y + dy,
+      })
       return
     }
 
@@ -1125,7 +1129,6 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       isPanningRef.current = false
       setIsPanning(false)
       panStartRef.current = null
-      scrollStartRef.current = null
       try {
         e.currentTarget.releasePointerCapture(e.pointerId)
       } catch {}
@@ -1293,15 +1296,54 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     <div
       ref={containerRef}
       onContextMenu={(e) => e.preventDefault()}
-      className={`flex-1 overflow-auto bg-slate-950 p-8 flex items-center justify-center relative select-none ${
+      onPointerDown={(e) => {
+        // 背景クリック時もパン移動できるようにする
+        if (
+          e.target === containerRef.current ||
+          activeTool === 'pan' ||
+          isSpacePressed ||
+          e.button === 1 ||
+          e.button === 2
+        ) {
+          isPanningRef.current = true
+          setIsPanning(true)
+          panStartRef.current = { x: e.clientX, y: e.clientY }
+          panOffsetStartRef.current = { ...panOffsetRef.current }
+          try {
+            ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+          } catch {}
+        }
+      }}
+      onPointerMove={(e) => {
+        if (isPanningRef.current && panStartRef.current) {
+          e.preventDefault()
+          const dx = e.clientX - panStartRef.current.x
+          const dy = e.clientY - panStartRef.current.y
+          setPanOffset({
+            x: panOffsetStartRef.current.x + dx,
+            y: panOffsetStartRef.current.y + dy,
+          })
+        }
+      }}
+      onPointerUp={(e) => {
+        if (isPanningRef.current) {
+          isPanningRef.current = false
+          setIsPanning(false)
+          panStartRef.current = null
+          try {
+            ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
+          } catch {}
+        }
+      }}
+      className={`flex-1 overflow-hidden bg-slate-950 p-8 flex items-center justify-center relative select-none ${
         isSpacePressed || activeTool === 'pan' ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : ''
       }`}
     >
       {pageImage && pageInfo ? (
         <div
-          className="relative shadow-2xl rounded-sm ring-1 ring-slate-800 transition-transform duration-100"
+          className="relative shadow-2xl rounded-sm ring-1 ring-slate-800 transition-none"
           style={{
-            transform: `scale(${zoom})`,
+            transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`,
             transformOrigin: 'center center',
             width: `${pageInfo.width * 1.5}px`,
             height: `${pageInfo.height * 1.5}px`,
@@ -2299,7 +2341,6 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
               isPanningRef.current = false
               setIsPanning(false)
               panStartRef.current = null
-              scrollStartRef.current = null
             }}
             className={`absolute inset-0 select-none z-10 ${getCursorClass()}`}
             title={
