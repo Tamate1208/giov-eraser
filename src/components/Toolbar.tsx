@@ -21,6 +21,7 @@ import {
   PenTool,
   MousePointer,
   Ruler,
+  Hand,
 } from 'lucide-react'
 import { AppMode, DrawingTool, FillMode, ArrowHead, RulerMeasureMode } from '../types/drawing'
 
@@ -408,6 +409,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           {/* ツール選択ボタングループ */}
           <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
             <button
+              onClick={() => onToolChange('pan')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition cursor-pointer ${
+                activeTool === 'pan'
+                  ? 'bg-blue-600 text-white shadow-sm font-bold'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+              title="手のひらツール（用紙をマウスドラッグで自由に移動 / Spaceキーでも移動可能）"
+            >
+              <Hand className="w-3.5 h-3.5" />
+              手のひら
+            </button>
+            <button
               onClick={() => onToolChange('select')}
               className={`flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition cursor-pointer ${
                 activeTool === 'select'
@@ -607,6 +620,11 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                   ? '💡 図面上の2点間をドラッグして実寸計測（Shiftキーで水平垂直ロック）'
                   : '💡 頂点を順次クリックして区画を囲み、始点クリックまたはEnterで面積確定'}
               </span>
+            </div>
+          ) : activeTool === 'pan' ? (
+            <div className="flex items-center gap-2 border-l border-slate-800 pl-3 text-blue-300 font-medium animate-fade-in text-xs">
+              <Hand className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+              <span>手のひらモード：マウスドラッグで用紙を自由にスクロール移動（ホイール回転でズーム、Spaceキー長押しでも移動可能）</span>
             </div>
           ) : activeTool === 'draw_eraser' ? (
             <div className="flex items-center gap-2 border-l border-slate-800 pl-3 text-rose-300 font-medium animate-fade-in text-xs">

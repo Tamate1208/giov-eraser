@@ -3,6 +3,7 @@ export type AppMode = 'eraser' | 'draw'
 export type RulerMeasureMode = 'distance' | 'area'
 
 export type DrawingTool =
+  | 'pan'
   | 'select'
   | 'text'
   | 'line'

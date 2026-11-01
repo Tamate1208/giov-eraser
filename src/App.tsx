@@ -944,6 +944,7 @@ export default function App() {
               drawings={currentPageDrawings}
               rulerScale={rulerScale}
               rulerMeasureMode={rulerMeasureMode}
+              onZoomChange={setZoom}
               onAddRedaction={handleAddRedaction}
               onRemoveRedaction={handleRemoveRedaction}
               onAddDrawing={handleAddDrawing}

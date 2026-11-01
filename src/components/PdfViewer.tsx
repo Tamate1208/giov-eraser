@@ -200,6 +200,7 @@ interface PdfViewerProps {
   rulerScale?: number;
   rulerMeasureMode?: RulerMeasureMode;
   // ハンドラ
+  onZoomChange?: (newZoom: number) => void;
   onAddRedaction: (rect: Omit<RedactRect, 'id'>) => void;
   onRemoveRedaction: (id: string) => void;
   onAddDrawing: (item: Omit<DrawingItem, 'id'>) => void;
@@ -224,6 +225,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   drawings,
   rulerScale = 100,
   rulerMeasureMode = 'distance',
+  onZoomChange,
   onAddRedaction,
   onRemoveRedaction,
   onAddDrawing,
@@ -237,6 +239,13 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   const isDraggingRef = useRef(false)
   const dragStartRef = useRef<{ x: number; y: number } | null>(null)
   const dragCurrentRef = useRef<{ x: number; y: number } | null>(null)
+
+  // スペースキー押下状態 ＆ マウスパン移動（画面スクロール）用の state / ref
+  const [isSpacePressed, setIsSpacePressed] = useState(false)
+  const [isPanning, setIsPanning] = useState(false)
+  const isPanningRef = useRef(false)
+  const panStartRef = useRef<{ x: number; y: number } | null>(null)
+  const scrollStartRef = useRef<{ left: number; top: number } | null>(null)
 
   // プレビュー表示用の state
   const [dragPreview, setDragPreview] = useState<{
@@ -645,9 +654,19 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     }
   }, [movingDrawingId, zoom, drawings, onUpdateDrawing])
 
-  // 選択中アイテムの Delete / BackSpace キー削除
+  // キーボードイベント (Delete/Backspace, Escape, Enter, Space手のひら)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // スペースキー長押しで手のひらモード
+      if (e.code === 'Space') {
+        const activeTag = document.activeElement?.tagName?.toLowerCase()
+        if (activeTag !== 'input' && activeTag !== 'textarea' && !textInput) {
+          e.preventDefault()
+          setIsSpacePressed(true)
+          return
+        }
+      }
+
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedDrawingId) {
         // テキスト入力中は除外
         if (textInput) return
@@ -671,8 +690,25 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         }
       }
     }
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        setIsSpacePressed(false)
+      }
+    }
+
+    const handleBlur = () => {
+      setIsSpacePressed(false)
+    }
+
     window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('blur', handleBlur)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('blur', handleBlur)
+    }
   }, [
     selectedDrawingId,
     textInput,
@@ -684,6 +720,44 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     pageInfo,
     rulerScale,
   ])
+
+  // マウスホイールによるズーム操作（Ctrl/Cmd/Alt + ホイール、または手のひらツール選択中のホイール回転）
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container || !onZoomChange) return
+
+    const handleWheel = (e: WheelEvent) => {
+      const shouldZoom = e.ctrlKey || e.metaKey || e.altKey || activeTool === 'pan'
+      if (shouldZoom) {
+        e.preventDefault()
+
+        const rect = container.getBoundingClientRect()
+        const mouseX = e.clientX - rect.left
+        const mouseY = e.clientY - rect.top
+
+        const zoomDelta = e.deltaY < 0 ? 1.15 : 0.87
+        const newZoom = Math.min(5.0, Math.max(0.2, Math.round(zoom * zoomDelta * 100) / 100))
+
+        if (newZoom !== zoom) {
+          const scrollX = container.scrollLeft
+          const scrollY = container.scrollTop
+
+          const newScrollLeft = (scrollX + mouseX) * (newZoom / zoom) - mouseX
+          const newScrollTop = (scrollY + mouseY) * (newZoom / zoom) - mouseY
+
+          onZoomChange(newZoom)
+
+          requestAnimationFrame(() => {
+            container.scrollLeft = newScrollLeft
+            container.scrollTop = newScrollTop
+          })
+        }
+      }
+    }
+
+    container.addEventListener('wheel', handleWheel, { passive: false })
+    return () => container.removeEventListener('wheel', handleWheel)
+  }, [zoom, activeTool, onZoomChange])
 
   // 物差しの面積計測の確定
   const handleFinishRulerArea = () => {
@@ -870,6 +944,26 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       target.setPointerCapture(e.pointerId)
     } catch {}
 
+    // パン移動（手のひらツール、Spaceキー押下中、中ボタン、右ボタン）の判定
+    const isPanTrigger =
+      activeTool === 'pan' ||
+      isSpacePressed ||
+      e.button === 1 ||
+      e.button === 2
+
+    if (isPanTrigger) {
+      isPanningRef.current = true
+      setIsPanning(true)
+      panStartRef.current = { x: e.clientX, y: e.clientY }
+      if (containerRef.current) {
+        scrollStartRef.current = {
+          left: containerRef.current.scrollLeft,
+          top: containerRef.current.scrollTop,
+        }
+      }
+      return
+    }
+
     const rect = target.getBoundingClientRect()
     const relX = (e.clientX - rect.left) / zoom
     const relY = (e.clientY - rect.top) / zoom
@@ -965,6 +1059,21 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!pageInfo || !overlayRef.current) return
 
+    // パン移動中の処理
+    if (
+      isPanningRef.current &&
+      panStartRef.current &&
+      scrollStartRef.current &&
+      containerRef.current
+    ) {
+      e.preventDefault()
+      const dx = e.clientX - panStartRef.current.x
+      const dy = e.clientY - panStartRef.current.y
+      containerRef.current.scrollLeft = scrollStartRef.current.left - dx
+      containerRef.current.scrollTop = scrollStartRef.current.top - dy
+      return
+    }
+
     const rect = overlayRef.current.getBoundingClientRect()
     const maxX = pageInfo.width * 1.5
     const maxY = pageInfo.height * 1.5
@@ -1011,6 +1120,17 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
 
   // ポインターアップ: ドラッグ完了
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    // パン移動の完了
+    if (isPanningRef.current) {
+      isPanningRef.current = false
+      setIsPanning(false)
+      panStartRef.current = null
+      scrollStartRef.current = null
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      } catch {}
+      return
+    }
     const isDragging = isDraggingRef.current
     const start = dragStartRef.current
     const current = dragCurrentRef.current
@@ -1156,10 +1276,26 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     }
   }
 
+  // カーソルスタイルの判定（スペースキー押下中または手のひらツールの時は grab/grabbing）
+  const getCursorClass = () => {
+    if (isSpacePressed || activeTool === 'pan') {
+      return isPanning ? 'cursor-grabbing' : 'cursor-grab'
+    }
+    if (appMode === 'eraser') return 'cursor-crosshair'
+    if (activeTool === 'select') return 'cursor-default'
+    if (activeTool === 'ruler') return 'cursor-crosshair'
+    if (activeTool === 'text') return 'cursor-text'
+    if (activeTool === 'check' || activeTool === 'draw_eraser') return 'cursor-pointer'
+    return 'cursor-crosshair'
+  }
+
   return (
     <div
       ref={containerRef}
-      className="flex-1 overflow-auto bg-slate-950 p-8 flex items-center justify-center relative select-none"
+      onContextMenu={(e) => e.preventDefault()}
+      className={`flex-1 overflow-auto bg-slate-950 p-8 flex items-center justify-center relative select-none ${
+        isSpacePressed || activeTool === 'pan' ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : ''
+      }`}
     >
       {pageImage && pageInfo ? (
         <div
@@ -2154,29 +2290,22 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onDoubleClick={handleDoubleClick}
+            onContextMenu={(e) => e.preventDefault()}
             onPointerCancel={() => {
               isDraggingRef.current = false
               dragStartRef.current = null
               dragCurrentRef.current = null
               setDragPreview(null)
+              isPanningRef.current = false
+              setIsPanning(false)
+              panStartRef.current = null
+              scrollStartRef.current = null
             }}
-            className={`absolute inset-0 select-none z-10 ${
-              appMode === 'eraser'
-                ? 'cursor-crosshair'
-                : activeTool === 'select'
-                ? 'cursor-default'
-                : activeTool === 'ruler'
-                ? 'cursor-crosshair'
-                : activeTool === 'text'
-                ? 'cursor-text'
-                : activeTool === 'check'
-                ? 'cursor-pointer'
-                : activeTool === 'draw_eraser'
-                ? 'cursor-pointer'
-                : 'cursor-crosshair'
-            }`}
+            className={`absolute inset-0 select-none z-10 ${getCursorClass()}`}
             title={
-              appMode === 'eraser'
+              isSpacePressed || activeTool === 'pan'
+                ? 'ドラッグして用紙を自由に移動（スクロール）'
+                : appMode === 'eraser'
                 ? 'マウスドラッグで消去したい範囲を囲んでください'
                 : activeTool === 'select'
                 ? '描画オブジェクトをクリックまたはドラッグして移動できます（Deleteキーで削除）'
