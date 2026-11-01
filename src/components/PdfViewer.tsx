@@ -279,6 +279,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   interface RulerResultData {
     type: 'distance' | 'area'
     scale: number
+    color?: string
     // 距離用
     x1?: number
     y1?: number
@@ -319,6 +320,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     text: string
     bgWhite: boolean
     rotation: number
+    editingId?: string
   } | null>(null)
 
   // テキスト回転ドラッグ用の state
@@ -377,6 +379,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       setRulerResult({
         type: 'distance',
         scale: rulerScale,
+        color: item.color,
         x1,
         y1,
         x2,
@@ -414,6 +417,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       setRulerResult({
         type: 'area',
         scale: rulerScale,
+        color: item.color,
         points: pts,
         areaMm2,
         realAreaStr,
@@ -453,6 +457,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       setRulerResult({
         type: 'area',
         scale: rulerScale,
+        color: item.color,
         points: pts,
         areaMm2,
         realAreaStr,
@@ -480,6 +485,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       setRulerResult({
         type: 'area',
         scale: rulerScale,
+        color: item.color,
         points: screenPts,
         areaMm2,
         realAreaStr,
@@ -538,6 +544,20 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     } else if (activeTool === 'select') {
       setRulerResult(null)
     }
+  }
+
+  // テキストのインライン再編集開始
+  const handleStartEditText = (item: DrawingItem, e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    setTextInput({
+      x: (item.x ?? 0) * 1.5,
+      y: (item.y ?? 0) * 1.5,
+      text: item.text ?? '',
+      bgWhite: item.bgWhite ?? true,
+      rotation: item.rotation ?? 0,
+      editingId: item.id,
+    })
+    setSelectedDrawingId(item.id)
   }
 
   // 描画アイテム上でのポインターダウン処理（ドラッグ移動の開始）
@@ -999,6 +1019,9 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   const handleBakeRulerToDrawing = () => {
     if (!rulerResult || !pageInfo) return
 
+    // 計測対象オブジェクトの色を引き継ぐ（未指定なら現在の描画色）
+    const targetColor = rulerResult.color || drawColor || '#10b981'
+
     if (rulerResult.type === 'distance') {
       const { x1 = 0, y1 = 0, x2 = 0, y2 = 0, realLengthStr, distMm = 0, angleDeg = 0 } = rulerResult
 
@@ -1006,7 +1029,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       onAddDrawing({
         pageIndex: pageInfo.index,
         tool: 'line',
-        color: '#10b981',
+        color: targetColor,
         lineWidth: 2,
         fontSize: 12,
         fillMode: 'none',
@@ -1028,7 +1051,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       onAddDrawing({
         pageIndex: pageInfo.index,
         tool: 'text',
-        color: '#10b981',
+        color: targetColor,
         fillMode: 'none',
         lineWidth: 1,
         fontSize: 12,
@@ -1041,12 +1064,12 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     } else if (rulerResult.type === 'area' && rulerResult.points) {
       const { points, realAreaStr, realPerimeterStr, center } = rulerResult
 
-      // 1. 多角形枠（半透明グリーン塗り）を追加
+      // 1. 多角形枠（塗りつぶしなしで図面を覆わない）を追加
       onAddDrawing({
         pageIndex: pageInfo.index,
         tool: 'polygon',
-        color: '#10b981',
-        fillMode: 'semi',
+        color: targetColor,
+        fillMode: 'none',
         lineWidth: 2,
         fontSize: 12,
         points: points.map((p) => ({ x: p.x / 1.5, y: p.y / 1.5 })),
@@ -1061,7 +1084,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       onAddDrawing({
         pageIndex: pageInfo.index,
         tool: 'text',
-        color: '#047857',
+        color: targetColor,
         fillMode: 'none',
         lineWidth: 1,
         fontSize: 12,
@@ -1076,26 +1099,40 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     setRulerResult(null)
   }
 
-  // テキスト入力の確定
+  // テキスト入力の確定（新規追加または既存更新）
   const handleConfirmText = () => {
     if (!textInput || !textInput.text.trim() || !pageInfo) {
       setTextInput(null)
       return
     }
 
-    onAddDrawing({
-      pageIndex: pageInfo.index,
-      tool: 'text',
-      color: drawColor,
-      fillMode: 'none',
-      lineWidth: 1,
-      fontSize,
-      text: textInput.text.trim(),
-      bgWhite: textInput.bgWhite,
-      rotation: textInput.rotation || 0,
-      x: textInput.x / 1.5,
-      y: textInput.y / 1.5,
-    })
+    if (textInput.editingId) {
+      // 既存テキストの更新
+      onUpdateDrawing?.(
+        textInput.editingId,
+        {
+          text: textInput.text.trim(),
+          bgWhite: textInput.bgWhite,
+          rotation: textInput.rotation || 0,
+        },
+        true
+      )
+    } else {
+      // 新規テキストの追加
+      onAddDrawing({
+        pageIndex: pageInfo.index,
+        tool: 'text',
+        color: drawColor,
+        fillMode: 'none',
+        lineWidth: 1,
+        fontSize,
+        text: textInput.text.trim(),
+        bgWhite: textInput.bgWhite,
+        rotation: textInput.rotation || 0,
+        x: textInput.x / 1.5,
+        y: textInput.y / 1.5,
+      })
+    }
 
     setTextInput(null)
   }
@@ -1593,16 +1630,16 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                   >
                     {isRulerMode && <title>クリックしてこの直線の長さを自動計測</title>}
                     {isEraserMode && <title>クリックして削除</title>}
-                    {/* 物差しホバー時のエメラルドハイライト */}
+                    {/* 物差しホバー時のハイライト */}
                     {isRulerMode && isHovered && (
                       <line
                         x1={x1}
                         y1={y1}
                         x2={x2}
                         y2={y2}
-                        stroke="#10b981"
+                        stroke={item.color || '#10b981'}
                         strokeWidth={item.lineWidth + 8}
-                        strokeOpacity="0.7"
+                        strokeOpacity="0.6"
                         strokeLinecap="round"
                       />
                     )}
@@ -1717,16 +1754,15 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                   >
                     {isRulerMode && <title>クリックしてこの矩形の面積・寸法を自動計測</title>}
                     {isEraserMode && <title>クリックして削除</title>}
-                    {/* 物差しホバー時のエメラルドハイライト */}
+                    {/* 物差しホバー時のハイライト（塗りを無くして図面を隠さない） */}
                     {isRulerMode && isHovered && (
                       <rect
                         x={rx - 4}
                         y={ry - 4}
                         width={rw + 8}
                         height={rh + 8}
-                        fill="#10b981"
-                        fillOpacity="0.15"
-                        stroke="#10b981"
+                        fill="none"
+                        stroke={item.color || '#10b981'}
                         strokeWidth="2.5"
                         strokeDasharray="4 2"
                         rx="4"
@@ -1830,16 +1866,15 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                   >
                     {isRulerMode && <title>クリックしてこの円の面積・寸法を自動計測</title>}
                     {isEraserMode && <title>クリックして削除</title>}
-                    {/* 物差しホバー時のエメラルドハイライト */}
+                    {/* 物差しホバー時のハイライト（塗りを無くして図面を隠さない） */}
                     {isRulerMode && isHovered && (
                       <ellipse
                         cx={cx}
                         cy={cy}
                         rx={rx + 4}
                         ry={ry + 4}
-                        fill="#10b981"
-                        fillOpacity="0.15"
-                        stroke="#10b981"
+                        fill="none"
+                        stroke={item.color || '#10b981'}
                         strokeWidth="2.5"
                         strokeDasharray="4 2"
                       />
@@ -1940,15 +1975,15 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                   >
                     {isRulerMode && <title>クリックしてこの多角形の面積・周長を自動計測</title>}
                     {isEraserMode && <title>クリックして削除</title>}
-                    {/* 物差しホバー時のエメラルドハイライト */}
+                    {/* 物差しホバー時のハイライト（塗りを無くして図面を隠さない） */}
                     {isRulerMode && isHovered && (
                       <polygon
                         points={pts}
-                        fill="#10b981"
-                        fillOpacity="0.15"
-                        stroke="#10b981"
+                        fill="none"
+                        stroke={item.color || '#10b981'}
                         strokeWidth={item.lineWidth + 6}
                         strokeOpacity="0.8"
+                        strokeDasharray="4 2"
                       />
                     )}
                     {isSelected && !isEraserMode && !isRulerMode && (
@@ -2111,9 +2146,15 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     }`}
                     onPointerDown={(e) => handleItemPointerDown(item, e)}
                     onClick={(e) => handleItemClick(item, e)}
+                    onDoubleClick={(e) => handleStartEditText(item, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
                   >
+                    <title>
+                      {isEraserMode
+                        ? 'クリックして削除'
+                        : 'ダブルクリックで文字内容を編集'}
+                    </title>
                     {item.bgWhite && (
                       <rect
                         x={tx - 4}
@@ -2200,6 +2241,23 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                         <circle cx="0" cy="0" r="9" fill="#10b981" stroke="#ffffff" strokeWidth="1.5" />
                         <path d="M -3.5 0 A 3.5 3.5 0 1 1 3.5 0" fill="none" stroke="#ffffff" strokeWidth="1.2" />
                         <path d="M 2 -2.5 L 4.5 0 L 2 2.5" fill="none" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                      </g>
+                    )}
+
+                    {/* 選択時のテキスト編集ボタン（✏️ 編集） */}
+                    {isSelected && !isEraserMode && (
+                      <g
+                        transform={`translate(${tx + estW + 34}, ${ty - fontPx / 2})`}
+                        onClick={(e) => handleStartEditText(item, e)}
+                        className="cursor-pointer hover:scale-125 transition transform"
+                      >
+                        <title>テキスト内容を編集（ダブルクリックでも編集可能）</title>
+                        <circle cx="0" cy="0" r="9" fill="#0284c7" stroke="#ffffff" strokeWidth="1.5" />
+                        {/* 鉛筆アイコン */}
+                        <path
+                          d="M -3 3 L 1.5 -1.5 L 3 -0 L -1.5 4.5 Z M -4.5 4.5 L -3 4 L -4 3 Z"
+                          fill="#ffffff"
+                        />
                       </g>
                     )}
 
@@ -2463,6 +2521,8 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
 
             {/* 確定した物差しの寸法線または面積枠表示 */}
             {rulerResult && (() => {
+              const highlightColor = rulerResult.color || '#10b981'
+
               if (rulerResult.type === 'distance') {
                 const { x1 = 0, y1 = 0, x2 = 0, y2 = 0 } = rulerResult
                 const dx = x2 - x1
@@ -2482,16 +2542,16 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       y1={y1}
                       x2={x2}
                       y2={y2}
-                      stroke="#10b981"
+                      stroke={highlightColor}
                       strokeWidth="6"
-                      strokeOpacity="0.25"
+                      strokeOpacity="0.2"
                     />
                     <line
                       x1={x1}
                       y1={y1}
                       x2={x2}
                       y2={y2}
-                      stroke="#10b981"
+                      stroke={highlightColor}
                       strokeWidth="2"
                     />
                     <line
@@ -2499,7 +2559,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       y1={y1 - ny}
                       x2={x1 + nx}
                       y2={y1 + ny}
-                      stroke="#10b981"
+                      stroke={highlightColor}
                       strokeWidth="2.5"
                     />
                     <line
@@ -2507,21 +2567,21 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       y1={y2 - ny}
                       x2={x2 + nx}
                       y2={y2 + ny}
-                      stroke="#10b981"
+                      stroke={highlightColor}
                       strokeWidth="2.5"
                     />
                     {arrowPath && (
                       <path
                         d={arrowPath}
-                        stroke="#10b981"
+                        stroke={highlightColor}
                         strokeWidth="2"
                         fill="none"
                         strokeLinecap="round"
                         strokeLinejoin="round"
                       />
                     )}
-                    <circle cx={x1} cy={y1} r="3" fill="#10b981" />
-                    <circle cx={x2} cy={y2} r="3" fill="#10b981" />
+                    <circle cx={x1} cy={y1} r="3" fill={highlightColor} />
+                    <circle cx={x2} cy={y2} r="3" fill={highlightColor} />
                   </g>
                 )
               } else if (rulerResult.type === 'area' && rulerResult.points) {
@@ -2529,18 +2589,18 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                   <g className="pointer-events-auto">
                     <polygon
                       points={rulerResult.points.map((p) => `${p.x},${p.y}`).join(' ')}
-                      fill="#10b981"
-                      fillOpacity={0.25}
-                      stroke="#10b981"
+                      fill="none"
+                      stroke={highlightColor}
                       strokeWidth={2.5}
+                      strokeDasharray="5 3"
                     />
                     {rulerResult.points.map((p, idx) => (
                       <circle
                         key={idx}
                         cx={p.x}
                         cy={p.y}
-                        r="4"
-                        fill="#10b981"
+                        r="3.5"
+                        fill={highlightColor}
                         stroke="#ffffff"
                         strokeWidth="1.5"
                       />
@@ -2741,7 +2801,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
               <div className="text-xs font-bold text-slate-800 flex items-center justify-between border-b border-slate-100 pb-1.5">
                 <span className="flex items-center gap-1.5">
                   <Type className="w-3.5 h-3.5 text-blue-600" />
-                  <span>文字・校正テキストの入力</span>
+                  <span>{textInput.editingId ? 'テキストの編集' : '文字・校正テキストの入力'}</span>
                 </span>
                 <span className="text-slate-400 text-[11px] font-mono">({fontSize}pt)</span>
               </div>
@@ -2800,7 +2860,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     className="px-3 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1 text-[11px] shadow-sm transition active:scale-95 cursor-pointer"
                   >
                     <CornerDownLeft className="w-3 h-3" />
-                    決定
+                    {textInput.editingId ? '更新' : '決定'}
                   </button>
                 </div>
               </div>
