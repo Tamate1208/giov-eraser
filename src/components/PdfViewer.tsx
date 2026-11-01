@@ -297,6 +297,14 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   }
   const [rulerResult, setRulerResult] = useState<RulerResultData | null>(null)
 
+  // ツール切り替え時に物差し計測結果や計測途中の頂点をクリア
+  useEffect(() => {
+    if (activeTool !== 'ruler') {
+      setRulerResult(null)
+      setRulerAreaPoints([])
+    }
+  }, [activeTool])
+
   // 物差しの面積計測用多角形頂点リスト
   const [rulerAreaPoints, setRulerAreaPoints] = useState<Point[]>([])
 
@@ -516,7 +524,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     })
   }
 
-  // 描画アイテムクリック処理（描画消しゴム時は即座に削除、物差し/選択ツール時は自動計測）
+  // 描画アイテムクリック処理（描画消しゴム時は即座に削除、物差しツール時のみ自動計測）
   const handleItemClick = (item: DrawingItem, e: React.MouseEvent) => {
     e.stopPropagation()
     if (appMode === 'draw' && activeTool === 'draw_eraser') {
@@ -525,8 +533,10 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       return
     }
     setSelectedDrawingId(item.id)
-    if (appMode === 'draw' && (activeTool === 'ruler' || activeTool === 'select')) {
+    if (appMode === 'draw' && activeTool === 'ruler') {
       handleMeasureDrawing(item)
+    } else if (activeTool === 'select') {
+      setRulerResult(null)
     }
   }
 
@@ -539,6 +549,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     // 選択移動ツール中、または既に選択されているアイテムならドラッグ移動開始
     if (activeTool === 'select' || selectedDrawingId === item.id) {
       e.stopPropagation()
+      setRulerResult(null)
       setSelectedDrawingId(item.id)
       setMovingDrawingId(item.id)
       moveStartPointerRef.current = { x: e.clientX, y: e.clientY }
