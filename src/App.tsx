@@ -47,6 +47,7 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState<number>(0)
   const [zoom, setZoom] = useState<number>(1.0)
   const [resetViewTrigger, setResetViewTrigger] = useState<number>(0)
+  const [fitViewTrigger, setFitViewTrigger] = useState<number>(0)
   const [colorMode, setColorMode] = useState<'black' | 'white'>('black')
   const [selectMode, setSelectMode] = useState<'text' | 'rect'>('text')
   const [redactions, setRedactions] = useState<RedactRect[]>([])
@@ -1251,6 +1252,7 @@ export default function App() {
             onRulerMeasureModeChange={setRulerMeasureMode}
             onUndo={handleUndo}
             onResetView={() => setResetViewTrigger(Date.now())}
+            onFitToWindow={() => setFitViewTrigger(Date.now())}
           />
 
           {/* メインワークスペース: サムネイル + メインビューア */}
@@ -1300,6 +1302,7 @@ export default function App() {
               rulerScale={rulerScale}
               rulerMeasureMode={rulerMeasureMode}
               resetViewTrigger={resetViewTrigger}
+              fitViewTrigger={fitViewTrigger}
               onZoomChange={setZoom}
               onAddRedaction={handleAddRedaction}
               onRemoveRedaction={handleRemoveRedaction}

@@ -226,6 +226,7 @@ interface PdfViewerProps {
   // ハンドラ
   onZoomChange?: (newZoom: number) => void;
   resetViewTrigger?: number;
+  fitViewTrigger?: number;
   onAddRedaction: (rect: Omit<RedactRect, 'id'>) => void;
   onRemoveRedaction: (id: string) => void;
   onAddDrawing: (item: Omit<DrawingItem, 'id'>) => void;
@@ -252,6 +253,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   rulerMeasureMode = 'distance',
   onZoomChange,
   resetViewTrigger,
+  fitViewTrigger,
   onAddRedaction,
   onRemoveRedaction,
   onAddDrawing,
@@ -281,10 +283,27 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     panOffsetRef.current = panOffset
   }, [panOffset])
 
-  // ページ切り替え時または「100%(中央)」ボタン押下時に位置を画面中央にリセット
+  // ページ切り替え時または「100%」ボタン押下時に位置を画面中央にリセット
   useEffect(() => {
     setPanOffset({ x: 0, y: 0 })
   }, [pageInfo?.index, resetViewTrigger])
+
+  // 「ウィンドウに合わせる」ボタン押下時: 表示領域サイズに合わせて最適ズームを計算し中央に配置
+  useEffect(() => {
+    if (!fitViewTrigger || !pageInfo || !containerRef.current || !onZoomChange) return
+    const rect = containerRef.current.getBoundingClientRect()
+    // 上下左右に余白 (48px) を持たせた有効領域
+    const availW = Math.max(100, rect.width - 48)
+    const availH = Math.max(100, rect.height - 48)
+    const basePageW = pageInfo.width * 1.5
+    const basePageH = pageInfo.height * 1.5
+
+    const fitZoom = Math.min(availW / basePageW, availH / basePageH)
+    const clampedZoom = Math.min(5.0, Math.max(0.2, Math.round(fitZoom * 100) / 100))
+
+    setPanOffset({ x: 0, y: 0 })
+    onZoomChange(clampedZoom)
+  }, [fitViewTrigger])
 
   // プレビュー表示用の state
   const [dragPreview, setDragPreview] = useState<{
@@ -1053,16 +1072,18 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     }
   }, [textInput !== null])
 
-  // マウスホイールによるズーム操作（Ctrl/Cmd/Alt + ホイール、または手のひらツール選択中のホイール回転）
+  // マウスホイールによる操作:
+  // - Ctrl / Cmd / Alt + ホイール: カーソル位置を中心に拡大・縮小（ズーム）
+  // - 通常のホイール回転（または2本指スクロール）: 用紙を上下・左右にスムーズにスクロール
   useEffect(() => {
     const container = containerRef.current
     if (!container || !onZoomChange) return
 
     const handleWheel = (e: WheelEvent) => {
-      const shouldZoom = e.ctrlKey || e.metaKey || e.altKey || activeTool === 'pan'
-      if (shouldZoom) {
-        e.preventDefault()
+      e.preventDefault()
 
+      const shouldZoom = e.ctrlKey || e.metaKey || e.altKey
+      if (shouldZoom) {
         const rect = container.getBoundingClientRect()
         const cx = rect.width / 2
         const cy = rect.height / 2
@@ -1081,6 +1102,15 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
           setPanOffset({ x: newPanX, y: newPanY })
           onZoomChange(newZoom)
         }
+      } else {
+        // 通常のホイールスクロール（Shift + ホイールは横スクロールとして扱う）
+        const dx = e.shiftKey && e.deltaX === 0 ? e.deltaY : e.deltaX
+        const dy = e.shiftKey && e.deltaX === 0 ? 0 : e.deltaY
+        const currentPan = panOffsetRef.current
+        setPanOffset({
+          x: currentPan.x - dx,
+          y: currentPan.y - dy,
+        })
       }
     }
 

@@ -23,6 +23,7 @@ import {
   Ruler,
   Hand,
   Image as ImageIcon,
+  Maximize2,
 } from 'lucide-react'
 import { AppMode, DrawingTool, FillMode, ArrowHead, RulerMeasureMode } from '../types/drawing'
 
@@ -57,6 +58,7 @@ interface ToolbarProps {
   onPageChange: (newPage: number) => void;
   onZoomChange: (newZoom: number) => void;
   onResetView?: () => void;
+  onFitToWindow?: () => void;
   onColorModeChange: (mode: 'black' | 'white') => void;
   onSelectModeChange: (mode: 'text' | 'rect') => void;
   onClearPageRedactions: () => void;
@@ -112,6 +114,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onPageChange,
   onZoomChange,
   onResetView,
+  onFitToWindow,
   onColorModeChange,
   onSelectModeChange,
   onClearPageRedactions,
@@ -199,17 +202,17 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 
           <div className="flex items-center gap-1.5 border-l border-slate-800 pl-3">
             <button
-              onClick={() => onZoomChange(Math.max(0.5, zoom - 0.2))}
+              onClick={() => onZoomChange(Math.max(0.2, Math.round((zoom - 0.2) * 100) / 100))}
               className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition cursor-pointer"
               title="縮小"
             >
               <ZoomOut className="w-4 h-4" />
             </button>
-            <span className="font-semibold text-slate-300 min-w-[42px] text-center">
+            <span className="font-semibold text-slate-300 min-w-[42px] text-center font-mono">
               {Math.round(zoom * 100)}%
             </span>
             <button
-              onClick={() => onZoomChange(Math.min(2.5, zoom + 0.2))}
+              onClick={() => onZoomChange(Math.min(5.0, Math.round((zoom + 0.2) * 100) / 100))}
               className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition cursor-pointer"
               title="拡大"
             >
@@ -220,10 +223,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                 onZoomChange(1.0)
                 onResetView?.()
               }}
-              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-400 hover:text-white font-medium cursor-pointer transition"
-              title="100%（原寸）に戻し、位置を中央にリセット"
+              className="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700/80 text-[11px] text-slate-300 hover:text-white font-semibold cursor-pointer transition"
+              title="100%（原寸）に切り替え、位置を中央にリセット"
             >
-              100% (中央)
+              100%
+            </button>
+            <button
+              onClick={() => onFitToWindow?.()}
+              className="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700/80 text-[11px] text-blue-300 hover:text-white font-semibold flex items-center gap-1 cursor-pointer transition"
+              title="現在のウィンドウ（表示領域）に合わせて全体表示し、中央に配置"
+            >
+              <Maximize2 className="w-3 h-3" />
+              <span>ウィンドウに合わせる</span>
             </button>
           </div>
         </div>
