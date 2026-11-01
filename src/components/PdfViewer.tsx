@@ -8,7 +8,7 @@ import {
   DrawingItem,
   Point,
 } from '../types/drawing'
-import { X, Eraser, Check, CornerDownLeft, Trash2, Move, Ruler, ArrowRight } from 'lucide-react'
+import { X, Eraser, Check, CornerDownLeft, Trash2, Move, Ruler, ArrowRight, RotateCw } from 'lucide-react'
 
 // 角度・スナップ計算ヘルパー (Shiftキー押下時: 水平・垂直・45度ロック、正方形・真円ロック)
 function applyShiftSnap(
@@ -176,6 +176,31 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     y: number
     text: string
     bgWhite: boolean
+    rotation: number
+  } | null>(null)
+
+  // テキスト回転ドラッグ用の state
+  const [rotatingDrawingId, setRotatingDrawingId] = useState<string | null>(null)
+  const rotateCenterRef = useRef<{ x: number; y: number } | null>(null)
+  const rotateStartAngleRef = useRef<number>(0)
+  const rotateInitialAngleRef = useRef<number>(0)
+
+  // 線への吸着ガイド表示用 state
+  const [snapGuide, setSnapGuide] = useState<{
+    x1: number
+    y1: number
+    x2: number
+    y2: number
+    midX: number
+    midY: number
+    targetX: number
+    targetY: number
+    angle: number
+  } | null>(null)
+  const snapGuideRef = useRef<{
+    targetX: number
+    targetY: number
+    angle: number
   } | null>(null)
 
   // 選択中のアイテムID（ホバーまたはクリックで削除できるように）
@@ -206,10 +231,90 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       setMovingDrawingId(item.id)
       moveStartPointerRef.current = { x: e.clientX, y: e.clientY }
       moveItemSnapshotRef.current = JSON.parse(JSON.stringify(item))
+      snapGuideRef.current = null
+      setSnapGuide(null)
     }
   }
 
-  // オブジェクトドラッグ移動中のグローバルポインター追従と確定
+  // テキスト回転ハンドルのドラッグ開始処理
+  const handleRotateStart = (item: DrawingItem, e: React.PointerEvent) => {
+    e.stopPropagation()
+    setRotatingDrawingId(item.id)
+    const tx = (item.x ?? 0) * 1.5
+    const ty = (item.y ?? 0) * 1.5
+    const fontPx = item.fontSize * 1.5
+    const estW = (item.text?.length || 4) * fontPx * 0.95 + 8
+    // テキストの中心座標
+    const cx = tx + estW / 2
+    const cy = ty - fontPx / 2
+    rotateCenterRef.current = { x: cx, y: cy }
+    rotateInitialAngleRef.current = item.rotation || 0
+
+    const rect = overlayRef.current?.getBoundingClientRect()
+    if (rect) {
+      const px = (e.clientX - rect.left) / zoom
+      const py = (e.clientY - rect.top) / zoom
+      rotateStartAngleRef.current = Math.atan2(py - cy, px - cx)
+    }
+  }
+
+  // テキスト回転ドラッグ中のグローバル追従と確定
+  useEffect(() => {
+    if (!rotatingDrawingId) return
+
+    const handleGlobalRotateMove = (e: PointerEvent) => {
+      if (!rotateCenterRef.current || !overlayRef.current) return
+      const rect = overlayRef.current.getBoundingClientRect()
+      const px = (e.clientX - rect.left) / zoom
+      const py = (e.clientY - rect.top) / zoom
+
+      const cx = rotateCenterRef.current.x
+      const cy = rotateCenterRef.current.y
+      const curAngleRad = Math.atan2(py - cy, px - cx)
+      const diffDeg = ((curAngleRad - rotateStartAngleRef.current) * 180) / Math.PI
+      let newRot = Math.round(rotateInitialAngleRef.current + diffDeg)
+
+      // Shiftキー押下時は 15度刻みスナップ
+      if (e.shiftKey) {
+        newRot = Math.round(newRot / 15) * 15
+      }
+
+      newRot = ((newRot % 360) + 360) % 360
+      onUpdateDrawing?.(rotatingDrawingId, { rotation: newRot }, false)
+    }
+
+    const handleGlobalRotateUp = (e: PointerEvent) => {
+      if (rotateCenterRef.current && overlayRef.current) {
+        const rect = overlayRef.current.getBoundingClientRect()
+        const px = (e.clientX - rect.left) / zoom
+        const py = (e.clientY - rect.top) / zoom
+
+        const cx = rotateCenterRef.current.x
+        const cy = rotateCenterRef.current.y
+        const curAngleRad = Math.atan2(py - cy, px - cx)
+        const diffDeg = ((curAngleRad - rotateStartAngleRef.current) * 180) / Math.PI
+        let newRot = Math.round(rotateInitialAngleRef.current + diffDeg)
+
+        if (e.shiftKey) {
+          newRot = Math.round(newRot / 15) * 15
+        }
+
+        newRot = ((newRot % 360) + 360) % 360
+        onUpdateDrawing?.(rotatingDrawingId, { rotation: newRot }, true)
+      }
+      setRotatingDrawingId(null)
+      rotateCenterRef.current = null
+    }
+
+    window.addEventListener('pointermove', handleGlobalRotateMove)
+    window.addEventListener('pointerup', handleGlobalRotateUp)
+    return () => {
+      window.removeEventListener('pointermove', handleGlobalRotateMove)
+      window.removeEventListener('pointerup', handleGlobalRotateUp)
+    }
+  }, [rotatingDrawingId, zoom, onUpdateDrawing])
+
+  // オブジェクトドラッグ移動中のグローバルポインター追従と確定（線への吸着付き）
   useEffect(() => {
     if (!movingDrawingId) return
 
@@ -239,6 +344,120 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
             })),
           }
         }
+      } else if (snap.tool === 'text') {
+        // テキストの移動 ＋ 直線への平行・中点吸着（スマートマグネット）
+        const fontPx = (snap.fontSize || 16) * 1.5
+        const estW = (snap.text?.length || 4) * fontPx * 0.95 + 8
+
+        let curX = Math.round(((snap.x ?? 0) + deltaX) * 10) / 10
+        let curY = Math.round(((snap.y ?? 0) + deltaY) * 10) / 10
+        let curRot = snap.rotation || 0
+
+        const textCenterScreenX = (curX + estW / 1.5 / 2) * 1.5
+        const textCenterScreenY = (curY - fontPx / 1.5 / 2) * 1.5
+
+        let bestSnap: {
+          x: number
+          y: number
+          rot: number
+          guide: any
+        } | null = null
+        let minDistance = 28 // 吸着しきい値 (28px以内)
+
+        for (const item of drawings) {
+          if (item.pageIndex !== snap.pageIndex) continue
+          if (item.tool !== 'line' && item.tool !== 'arrow') continue
+          if (!item.points || item.points.length < 2) continue
+
+          const lx1 = item.points[0].x * 1.5
+          const ly1 = item.points[0].y * 1.5
+          const lx2 = item.points[1].x * 1.5
+          const ly2 = item.points[1].y * 1.5
+
+          const lineLen = Math.hypot(lx2 - lx1, ly2 - ly1)
+          if (lineLen < 15) continue
+
+          const ux = (lx2 - lx1) / lineLen
+          const uy = (ly2 - ly1) / lineLen
+          const nx = -uy
+          const ny = ux
+
+          // 線の角度（可読性補正: 人間が読みやすい左→右、下→上）
+          let lineAngle = (Math.atan2(ly2 - ly1, lx2 - lx1) * 180) / Math.PI
+          if (lineAngle > 90) lineAngle -= 180
+          if (lineAngle < -90) lineAngle += 180
+
+          const midX = (lx1 + lx2) / 2
+          const midY = (ly1 + ly2) / 2
+          const offsetDist = fontPx * 0.65 + 6
+
+          const upX = midX + nx * offsetDist
+          const upY = midY + ny * offsetDist
+          const downX = midX - nx * offsetDist
+          const downY = midY - ny * offsetDist
+
+          const distUp = Math.hypot(textCenterScreenX - upX, textCenterScreenY - upY)
+          const distDown = Math.hypot(textCenterScreenX - downX, textCenterScreenY - downY)
+
+          if (distUp < minDistance) {
+            minDistance = distUp
+            bestSnap = {
+              x: (upX - estW / 2) / 1.5,
+              y: (upY + fontPx / 2) / 1.5,
+              rot: Math.round(lineAngle),
+              guide: {
+                x1: lx1,
+                y1: ly1,
+                x2: lx2,
+                y2: ly2,
+                midX,
+                midY,
+                targetX: upX,
+                targetY: upY,
+                angle: Math.round(lineAngle),
+              },
+            }
+          } else if (distDown < minDistance) {
+            minDistance = distDown
+            bestSnap = {
+              x: (downX - estW / 2) / 1.5,
+              y: (downY + fontPx / 2) / 1.5,
+              rot: Math.round(lineAngle),
+              guide: {
+                x1: lx1,
+                y1: ly1,
+                x2: lx2,
+                y2: ly2,
+                midX,
+                midY,
+                targetX: downX,
+                targetY: downY,
+                angle: Math.round(lineAngle),
+              },
+            }
+          }
+        }
+
+        if (bestSnap) {
+          curX = Math.round(bestSnap.x * 10) / 10
+          curY = Math.round(bestSnap.y * 10) / 10
+          curRot = bestSnap.rot
+          snapGuideRef.current = {
+            targetX: curX,
+            targetY: curY,
+            angle: curRot,
+          }
+          setSnapGuide(bestSnap.guide)
+        } else {
+          snapGuideRef.current = null
+          setSnapGuide(null)
+        }
+
+        updates = {
+          x: curX,
+          y: curY,
+          rotation: curRot,
+        }
       } else {
         updates = {
           x: Math.round(((snap.x ?? 0) + deltaX) * 10) / 10,
@@ -254,7 +473,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         const deltaX = (e.clientX - moveStartPointerRef.current.x) / zoom / 1.5
         const deltaY = (e.clientY - moveStartPointerRef.current.y) / zoom / 1.5
 
-        if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5) {
+        if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5 || snapGuideRef.current) {
           const snap = moveItemSnapshotRef.current
           let updates: Partial<DrawingItem> = {}
 
@@ -276,6 +495,20 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 })),
               }
             }
+          } else if (snap.tool === 'text') {
+            if (snapGuideRef.current) {
+              updates = {
+                x: snapGuideRef.current.targetX,
+                y: snapGuideRef.current.targetY,
+                rotation: snapGuideRef.current.angle,
+              }
+            } else {
+              updates = {
+                x: Math.round(((snap.x ?? 0) + deltaX) * 10) / 10,
+                y: Math.round(((snap.y ?? 0) + deltaY) * 10) / 10,
+                rotation: snap.rotation || 0,
+              }
+            }
           } else {
             updates = {
               x: Math.round(((snap.x ?? 0) + deltaX) * 10) / 10,
@@ -290,6 +523,8 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       setMovingDrawingId(null)
       moveStartPointerRef.current = null
       moveItemSnapshotRef.current = null
+      snapGuideRef.current = null
+      setSnapGuide(null)
     }
 
     window.addEventListener('pointermove', handleGlobalPointerMove)
@@ -298,7 +533,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       window.removeEventListener('pointermove', handleGlobalPointerMove)
       window.removeEventListener('pointerup', handleGlobalPointerUp)
     }
-  }, [movingDrawingId, zoom, onUpdateDrawing])
+  }, [movingDrawingId, zoom, drawings, onUpdateDrawing])
 
   // 選択中アイテムの Delete / BackSpace キー削除
   useEffect(() => {
@@ -312,6 +547,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       } else if (e.key === 'Escape') {
         setSelectedDrawingId(null)
         setRulerResult(null)
+        setSnapGuide(null)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -337,9 +573,12 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       ],
     })
 
-    // 2. 寸法テキストを追加（中央に白背景付き）
+    // 2. 寸法テキストを追加（中央に白背景付き・線に平行な角度）
     const midX = (rulerResult.x1 + rulerResult.x2) / 2 / 1.5
     const midY = (rulerResult.y1 + rulerResult.y2) / 2 / 1.5
+    let textRot = rulerResult.angleDeg
+    if (textRot > 90 && textRot <= 270) textRot -= 180
+
     onAddDrawing({
       pageIndex: pageInfo.index,
       tool: 'text',
@@ -349,6 +588,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       fontSize: 12,
       text: `${rulerResult.distMm} mm`,
       bgWhite: true,
+      rotation: textRot,
       x: midX - 25,
       y: midY - 6,
     })
@@ -372,6 +612,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       fontSize,
       text: textInput.text.trim(),
       bgWhite: textInput.bgWhite,
+      rotation: textInput.rotation || 0,
       x: textInput.x / 1.5,
       y: textInput.y / 1.5,
     })
@@ -446,6 +687,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         y: relY,
         text: '',
         bgWhite: true, // デフォルトで白背景（墨消し跡の打ち直しに便利）
+        rotation: 0,
       })
       return
     }
@@ -1190,10 +1432,14 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 const ty = item.y * 1.5
                 const fontPx = item.fontSize * 1.5
                 const estW = item.text.length * fontPx * 0.95 + 8
+                const cx = tx + estW / 2
+                const cy = ty - fontPx / 2
+                const rot = item.rotation || 0
 
                 return (
                   <g
                     key={item.id}
+                    transform={rot ? `rotate(${rot}, ${cx}, ${cy})` : undefined}
                     className={`pointer-events-auto group ${
                       isEraserMode
                         ? 'cursor-pointer hover:opacity-60'
@@ -1256,15 +1502,49 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
 
                     {/* 選択中かつ選択ツールの移動可能バッジ */}
                     {isSelected && !isEraserMode && activeTool === 'select' && (
-                      <g transform={`translate(${tx + estW / 2}, ${ty - fontPx / 2})`} className="pointer-events-none opacity-90 shadow-md">
+                      <g transform={`translate(${cx}, ${cy})`} className="pointer-events-none opacity-90 shadow-md">
                         <circle cx="0" cy="0" r="8" fill="#0284c7" stroke="#ffffff" strokeWidth="1.5" />
                         <path d="M -3 0 L 3 0 M 0 -3 L 0 3" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" fill="none" />
                       </g>
                     )}
 
+                    {/* 選択中の自由回転ハンドル（上部） */}
+                    {isSelected && !isEraserMode && (
+                      <g
+                        transform={`translate(${cx}, ${ty - fontPx})`}
+                        className="cursor-grab active:cursor-grabbing group/rot"
+                        onPointerDown={(e) => handleRotateStart(item, e)}
+                      >
+                        <title>ドラッグして回転（Shiftキーで15度スナップ）</title>
+                        <line x1="0" y1="0" x2="0" y2="-20" stroke="#10b981" strokeWidth="1.5" strokeDasharray="2 2" />
+                        <circle cx="0" cy="-20" r="7" fill="#10b981" stroke="#ffffff" strokeWidth="1.5" className="hover:scale-125 transition transform shadow-md" />
+                        <path d="M -3 -20 A 3 3 0 1 1 3 -20" fill="none" stroke="#ffffff" strokeWidth="1.2" />
+                        <path d="M 2 -22 L 4 -20 L 2 -18" fill="none" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                      </g>
+                    )}
+
+                    {/* 選択時のクイック90°回転ボタン（右横） */}
+                    {isSelected && !isEraserMode && (
+                      <g
+                        transform={`translate(${tx + estW + 12}, ${ty - fontPx / 2})`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const nextRot = ((item.rotation || 0) + 90) % 360
+                          onUpdateDrawing?.(item.id, { rotation: nextRot }, true)
+                        }}
+                        className="cursor-pointer hover:scale-125 transition transform"
+                      >
+                        <title>90度回転</title>
+                        <circle cx="0" cy="0" r="9" fill="#10b981" stroke="#ffffff" strokeWidth="1.5" />
+                        <path d="M -3.5 0 A 3.5 3.5 0 1 1 3.5 0" fill="none" stroke="#ffffff" strokeWidth="1.2" />
+                        <path d="M 2 -2.5 L 4.5 0 L 2 2.5" fill="none" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                      </g>
+                    )}
+
+                    {/* 選択時・ホバー時の削除ボタン */}
                     {(isHovered || isSelected) && (
                       <g
-                        transform={`translate(${tx - 8}, ${ty - fontPx / 2})`}
+                        transform={`translate(${tx - 12}, ${ty - fontPx / 2})`}
                         onClick={(e) => {
                           e.stopPropagation()
                           onRemoveDrawing(item.id)
@@ -1535,6 +1815,33 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 </g>
               )
             })()}
+
+            {/* 線への吸着ガイド表示（スマートマグネット） */}
+            {snapGuide && (
+              <g className="pointer-events-none animate-fade-in">
+                {/* 線の中心とテキスト吸着位置を結ぶ点線 */}
+                <line
+                  x1={snapGuide.midX}
+                  y1={snapGuide.midY}
+                  x2={snapGuide.targetX}
+                  y2={snapGuide.targetY}
+                  stroke="#10b981"
+                  strokeWidth="2"
+                  strokeDasharray="3 3"
+                />
+                {/* 線の中点マーカー */}
+                <circle cx={snapGuide.midX} cy={snapGuide.midY} r="4" fill="#10b981" stroke="#ffffff" strokeWidth="1.5" />
+                {/* 吸着ターゲットマーカー */}
+                <circle cx={snapGuide.targetX} cy={snapGuide.targetY} r="5" fill="#34d399" stroke="#ffffff" strokeWidth="1.5" />
+                {/* 角度同期バッジ */}
+                <g transform={`translate(${snapGuide.targetX}, ${snapGuide.targetY - 14})`}>
+                  <rect x="-42" y="-10" width="84" height="20" rx="4" fill="#064e3b" stroke="#34d399" strokeWidth="1" className="shadow-lg" />
+                  <text x="0" y="4" fill="#34d399" fontSize="10" fontWeight="bold" textAnchor="middle" fontFamily="ui-monospace, monospace">
+                    🧲 {snapGuide.angle}° 吸着
+                  </text>
+                </g>
+              </g>
+            )}
           </svg>
 
           {/* ドラッグ操作専用オーバーレイ (PointerCapture) */}
@@ -1703,14 +2010,28 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 </label>
                 <div className="flex items-center gap-1.5">
                   <button
+                    type="button"
+                    onClick={() =>
+                      setTextInput({
+                        ...textInput,
+                        rotation: ((textInput.rotation || 0) + 90) % 360,
+                      })
+                    }
+                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] flex items-center gap-1 cursor-pointer transition border border-slate-700"
+                    title="テキストを90度回転"
+                  >
+                    <RotateCw className="w-3 h-3 text-emerald-400" />
+                    <span>{textInput.rotation || 0}°</span>
+                  </button>
+                  <button
                     onClick={() => setTextInput(null)}
-                    className="px-2 py-0.5 rounded text-slate-400 hover:text-white"
+                    className="px-2 py-0.5 rounded text-slate-400 hover:text-white cursor-pointer"
                   >
                     取消
                   </button>
                   <button
                     onClick={handleConfirmText}
-                    className="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold flex items-center gap-1 text-[11px] shadow-sm"
+                    className="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold flex items-center gap-1 text-[11px] shadow-sm cursor-pointer"
                   >
                     <CornerDownLeft className="w-3 h-3" />
                     決定

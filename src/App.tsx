@@ -317,6 +317,7 @@ export default function App() {
         if (target.y !== undefined) prevProps.y = target.y
         if (target.w !== undefined) prevProps.w = target.w
         if (target.h !== undefined) prevProps.h = target.h
+        if (target.rotation !== undefined) prevProps.rotation = target.rotation
         if (target.points) prevProps.points = target.points.map((p) => ({ ...p }))
 
         setHistory((h) => [...h, { type: 'move_drawing', id, prev: prevProps }])

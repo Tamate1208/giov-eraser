@@ -35,6 +35,7 @@ export interface DrawingItem {
   // テキスト用
   text?: string
   bgWhite?: boolean
+  rotation?: number // 回転角度 (0〜360度)
   // 矩形・丸・テキスト・チェックのバウンディングボックス (PDF座標系: 左上原点)
   x?: number
   y?: number

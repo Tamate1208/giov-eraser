@@ -424,12 +424,29 @@ export async function applyRedactions(
         const fontPx = d.fontSize || 16;
         const estW = d.text.length * fontPx * 1.2 + 20;
         const estH = fontPx + 10;
+        const rotDeg = d.rotation || 0;
 
-        // 背景を白で隠す矩形（ベクターで確実に白塗り）
+        // 背景を白で隠す矩形（ベクターで確実に白塗り・回転対応）
         if (d.bgWhite) {
           stream += 'q\n';
           stream += '1 1 1 rg 1 1 1 RG\n';
-          stream += `${toPdfX(d.x - 2).toFixed(2)} ${toPdfY(d.y + 4).toFixed(2)} ${estW.toFixed(2)} ${estH.toFixed(2)} re f\n`;
+
+          if (rotDeg !== 0) {
+            const pdfRad = -(rotDeg * Math.PI) / 180;
+            const cos = Math.cos(pdfRad).toFixed(6);
+            const sin = Math.sin(pdfRad).toFixed(6);
+            const negSin = (-Math.sin(pdfRad)).toFixed(6);
+            const centerX = d.x - 2 + estW / 2;
+            const centerY = d.y - fontPx + 2 + estH / 2;
+            const pdfCx = toPdfX(centerX);
+            const pdfCy = toPdfY(centerY);
+
+            stream += `${cos} ${sin} ${negSin} ${cos} ${pdfCx.toFixed(2)} ${pdfCy.toFixed(2)} cm\n`;
+            stream += `${(-estW / 2).toFixed(2)} ${(-estH / 2).toFixed(2)} ${estW.toFixed(2)} ${estH.toFixed(2)} re f\n`;
+          } else {
+            stream += `${toPdfX(d.x - 2).toFixed(2)} ${toPdfY(d.y + 4).toFixed(2)} ${estW.toFixed(2)} ${estH.toFixed(2)} re f\n`;
+          }
+
           stream += 'Q\n';
         }
 
@@ -440,6 +457,38 @@ export async function applyRedactions(
         annot.setColor(rgb);
         annot.setDefaultAppearance('Heiti', fontPx, rgb);
         annot.update();
+
+        // テキスト回転の適用
+        if (rotDeg !== 0) {
+          const normRot = ((rotDeg % 360) + 360) % 360;
+          if (normRot % 90 === 0) {
+            annot.getObject().put('Rotate', doc.newInteger(normRot));
+          } else {
+            try {
+              const apN = annot.getObject().resolve().get('AP')?.get('N');
+              if (apN && !apN.isNull()) {
+                const pdfRad = -(rotDeg * Math.PI) / 180;
+                const cos = Math.cos(pdfRad);
+                const sin = Math.sin(pdfRad);
+                const cx = toPdfX(d.x + estW / 2);
+                const cy = toPdfY(d.y - fontPx / 2);
+                const e = cx - cx * cos + cy * sin;
+                const f = cy - cx * sin - cy * cos;
+
+                const matArr = doc.newArray();
+                matArr.push(doc.newReal(cos));
+                matArr.push(doc.newReal(sin));
+                matArr.push(doc.newReal(-sin));
+                matArr.push(doc.newReal(cos));
+                matArr.push(doc.newReal(e));
+                matArr.push(doc.newReal(f));
+                apN.put('Matrix', matArr);
+              }
+            } catch (err) {
+              console.error('Failed to set annotation rotation matrix:', err);
+            }
+          }
+        }
       }
     }
 
