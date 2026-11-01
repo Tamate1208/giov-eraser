@@ -280,6 +280,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     type: 'distance' | 'area'
     scale: number
     color?: string
+    isFromObject?: boolean
     // 距離用
     x1?: number
     y1?: number
@@ -380,6 +381,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         type: 'distance',
         scale: rulerScale,
         color: item.color,
+        isFromObject: true,
         x1,
         y1,
         x2,
@@ -418,6 +420,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         type: 'area',
         scale: rulerScale,
         color: item.color,
+        isFromObject: true,
         points: pts,
         areaMm2,
         realAreaStr,
@@ -458,6 +461,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         type: 'area',
         scale: rulerScale,
         color: item.color,
+        isFromObject: true,
         points: pts,
         areaMm2,
         realAreaStr,
@@ -486,6 +490,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         type: 'area',
         scale: rulerScale,
         color: item.color,
+        isFromObject: true,
         points: screenPts,
         areaMm2,
         realAreaStr,
@@ -522,6 +527,8 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     setRulerResult({
       type: 'area',
       scale: rulerScale,
+      color: '#10b981',
+      isFromObject: true,
       points: pts,
       areaMm2,
       realAreaStr,
@@ -1005,6 +1012,8 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     setRulerResult({
       type: 'area',
       scale: rulerScale,
+      color: '#10b981',
+      isFromObject: false,
       points: [...rulerAreaPoints],
       areaMm2: Math.round(areaMm2 * 10) / 10,
       realAreaStr,
@@ -1019,28 +1028,30 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   const handleBakeRulerToDrawing = () => {
     if (!rulerResult || !pageInfo) return
 
-    // 計測対象オブジェクトの色を引き継ぐ（未指定なら現在の描画色）
-    const targetColor = rulerResult.color || drawColor || '#10b981'
+    // オブジェクト計測時はその色、手動計測時は常にエメラルドグリーン（#10b981）
+    const targetColor = rulerResult.isFromObject && rulerResult.color ? rulerResult.color : '#10b981'
 
     if (rulerResult.type === 'distance') {
       const { x1 = 0, y1 = 0, x2 = 0, y2 = 0, realLengthStr, distMm = 0, angleDeg = 0 } = rulerResult
 
-      // 1. 両端矢印の寸法線を追加
-      onAddDrawing({
-        pageIndex: pageInfo.index,
-        tool: 'line',
-        color: targetColor,
-        lineWidth: 2,
-        fontSize: 12,
-        fillMode: 'none',
-        arrowHead: 'both',
-        points: [
-          { x: x1 / 1.5, y: y1 / 1.5 },
-          { x: x2 / 1.5, y: y2 / 1.5 },
-        ],
-      })
+      // 手動計測時のみ寸法線を追加（オブジェクト計測時は既存の線があるので寸法線を複製しない）
+      if (!rulerResult.isFromObject) {
+        onAddDrawing({
+          pageIndex: pageInfo.index,
+          tool: 'line',
+          color: targetColor,
+          lineWidth: 2,
+          fontSize: 12,
+          fillMode: 'none',
+          arrowHead: 'both',
+          points: [
+            { x: x1 / 1.5, y: y1 / 1.5 },
+            { x: x2 / 1.5, y: y2 / 1.5 },
+          ],
+        })
+      }
 
-      // 2. 寸法テキストを追加（中央に白背景付き・線に平行な角度）
+      // 寸法テキストを追加（中央に白背景付き・線に平行な角度）
       const midX = (x1 + x2) / 2 / 1.5
       const midY = (y1 + y2) / 2 / 1.5
       let textRot = angleDeg
@@ -1064,18 +1075,20 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     } else if (rulerResult.type === 'area' && rulerResult.points) {
       const { points, realAreaStr, realPerimeterStr, center } = rulerResult
 
-      // 1. 多角形枠（塗りつぶしなしで図面を覆わない）を追加
-      onAddDrawing({
-        pageIndex: pageInfo.index,
-        tool: 'polygon',
-        color: targetColor,
-        fillMode: 'none',
-        lineWidth: 2,
-        fontSize: 12,
-        points: points.map((p) => ({ x: p.x / 1.5, y: p.y / 1.5 })),
-      })
+      // 手動計測時のみ多角形枠を追加（オブジェクト計測時は既存の図形があるので複製しない！）
+      if (!rulerResult.isFromObject) {
+        onAddDrawing({
+          pageIndex: pageInfo.index,
+          tool: 'polygon',
+          color: targetColor,
+          fillMode: 'none',
+          lineWidth: 2,
+          fontSize: 12,
+          points: points.map((p) => ({ x: p.x / 1.5, y: p.y / 1.5 })),
+        })
+      }
 
-      // 2. 重心に面積テキストラベルを注記
+      // 重心に面積テキストラベルを注記
       const c = center || { x: 0, y: 0 }
       const textLabel = realPerimeterStr
         ? `S=${realAreaStr} (L=${realPerimeterStr})`
@@ -1426,6 +1439,8 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         setRulerResult({
           type: 'distance',
           scale: rulerScale,
+          color: '#10b981',
+          isFromObject: false,
           x1: start.x,
           y1: start.y,
           x2: endX,
@@ -1630,6 +1645,29 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                   >
                     {isRulerMode && <title>クリックしてこの直線の長さを自動計測</title>}
                     {isEraserMode && <title>クリックして削除</title>}
+                    {/* 透明な当たり判定バッファ（幅22pxで確実にクリック・ドラッグを拾う） */}
+                    <line
+                      x1={x1}
+                      y1={y1}
+                      x2={x2}
+                      y2={y2}
+                      stroke="transparent"
+                      strokeWidth={Math.max(22, item.lineWidth + 18)}
+                      strokeLinecap="round"
+                    />
+                    {/* 選択ツール等のホバー時ガイド（触れていることがひと目で分かる淡いハイライト） */}
+                    {isHovered && !isEraserMode && !isSelected && !isRulerMode && (
+                      <line
+                        x1={x1}
+                        y1={y1}
+                        x2={x2}
+                        y2={y2}
+                        stroke="#38bdf8"
+                        strokeWidth={item.lineWidth + 8}
+                        strokeOpacity="0.35"
+                        strokeLinecap="round"
+                      />
+                    )}
                     {/* 物差しホバー時のハイライト */}
                     {isRulerMode && isHovered && (
                       <line
@@ -1975,6 +2013,24 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                   >
                     {isRulerMode && <title>クリックしてこの多角形の面積・周長を自動計測</title>}
                     {isEraserMode && <title>クリックして削除</title>}
+                    {/* 透明な当たり判定バッファ（塗りなし時でも輪郭を確実にクリック可能にする） */}
+                    <polygon
+                      points={pts}
+                      fill="transparent"
+                      stroke="transparent"
+                      strokeWidth={Math.max(20, item.lineWidth + 16)}
+                      strokeLinejoin="round"
+                    />
+                    {/* 選択ツール等のホバー時ガイド */}
+                    {isHovered && !isEraserMode && !isSelected && !isRulerMode && (
+                      <polygon
+                        points={pts}
+                        fill="none"
+                        stroke="#38bdf8"
+                        strokeWidth={item.lineWidth + 6}
+                        strokeOpacity="0.35"
+                      />
+                    )}
                     {/* 物差しホバー時のハイライト（塗りを無くして図面を隠さない） */}
                     {isRulerMode && isHovered && (
                       <polygon
