@@ -301,6 +301,31 @@ export default function App() {
     setDrawings((prev) => prev.filter((d) => d.id !== id))
   }
 
+  // 描画アイテムの更新（移動・変形）
+  const handleUpdateDrawing = (
+    id: string,
+    updates: Partial<DrawingItem>,
+    recordHistory: boolean = true
+  ) => {
+    setDrawings((prev) => {
+      const target = prev.find((d) => d.id === id)
+      if (!target) return prev
+
+      if (recordHistory) {
+        const prevProps: Partial<DrawingItem> = {}
+        if (target.x !== undefined) prevProps.x = target.x
+        if (target.y !== undefined) prevProps.y = target.y
+        if (target.w !== undefined) prevProps.w = target.w
+        if (target.h !== undefined) prevProps.h = target.h
+        if (target.points) prevProps.points = target.points.map((p) => ({ ...p }))
+
+        setHistory((h) => [...h, { type: 'move_drawing', id, prev: prevProps }])
+      }
+
+      return prev.map((d) => (d.id === id ? { ...d, ...updates } : d))
+    })
+  }
+
   // 元に戻す (Undo)
   const handleUndo = () => {
     setHistory((prev) => {
@@ -323,6 +348,11 @@ export default function App() {
           break
         case 'remove_drawing':
           setDrawings((d) => [...d, action.drawing])
+          break
+        case 'move_drawing':
+          setDrawings((prev) =>
+            prev.map((item) => (item.id === action.id ? { ...item, ...action.prev } : item))
+          )
           break
         case 'clear_page':
         case 'clear_all':
@@ -574,6 +604,7 @@ export default function App() {
               onAddRedaction={handleAddRedaction}
               onRemoveRedaction={handleRemoveRedaction}
               onAddDrawing={handleAddDrawing}
+              onUpdateDrawing={handleUpdateDrawing}
               onRemoveDrawing={handleRemoveDrawing}
             />
           </div>

@@ -19,6 +19,8 @@ import {
   Circle,
   Eraser,
   PenTool,
+  MousePointer,
+  Ruler,
 } from 'lucide-react'
 import { AppMode, DrawingTool, FillMode, ArrowHead } from '../types/drawing'
 
@@ -397,6 +399,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           {/* ツール選択ボタングループ */}
           <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
             <button
+              onClick={() => onToolChange('select')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition cursor-pointer ${
+                activeTool === 'select'
+                  ? 'bg-blue-600 text-white shadow-sm font-bold'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+              title="選択・移動（オブジェクトをクリックしてドラッグ移動）"
+            >
+              <MousePointer className="w-3.5 h-3.5" />
+              選択移動
+            </button>
+            <button
               onClick={() => onToolChange('text')}
               className={`flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition cursor-pointer ${
                 activeTool === 'text'
@@ -415,7 +429,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                   ? 'bg-blue-600 text-white shadow-sm font-bold'
                   : 'text-slate-300 hover:text-white'
               }`}
-              title="直線（矢印・引き出し線）"
+              title="直線（矢印・引き出し線 / Shiftキーで水平垂直ロック）"
             >
               <Minus className="w-3.5 h-3.5" />
               直線
@@ -427,7 +441,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                   ? 'bg-blue-600 text-white shadow-sm font-bold'
                   : 'text-slate-300 hover:text-white'
               }`}
-              title="矩形（四角囲み）"
+              title="矩形（四角囲み / Shiftキーで正方形ロック）"
             >
               <Square className="w-3.5 h-3.5" />
               四角囲み
@@ -451,7 +465,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                   ? 'bg-blue-600 text-white shadow-sm font-bold'
                   : 'text-slate-300 hover:text-white'
               }`}
-              title="丸囲み（〇印）"
+              title="丸囲み（〇印 / Shiftキーで真円ロック）"
             >
               <Circle className="w-3.5 h-3.5" />
               丸
@@ -469,6 +483,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               チェック
             </button>
             <button
+              onClick={() => onToolChange('ruler')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition cursor-pointer ${
+                activeTool === 'ruler'
+                  ? 'bg-blue-600 text-white shadow-sm font-bold'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+              title="透明物差し（ドラッグで寸法mm・距離・角度を計測 / Shiftキーで水平垂直ロック）"
+            >
+              <Ruler className="w-3.5 h-3.5" />
+              物差し
+            </button>
+            <button
               onClick={() => onToolChange('draw_eraser')}
               className={`flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition cursor-pointer ${
                 activeTool === 'draw_eraser'
@@ -482,10 +508,20 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             </button>
           </div>
 
-          {/* 描画消しゴム選択時のガイド表示 */}
-          {activeTool === 'draw_eraser' ? (
-            <div className="flex items-center gap-2 border-l border-slate-800 pl-3 text-rose-300 font-medium animate-fade-in">
-              <Eraser className="w-4 h-4 text-rose-400 shrink-0" />
+          {/* 選択移動・物差し・消しゴム選択時のガイド表示 */}
+          {activeTool === 'select' ? (
+            <div className="flex items-center gap-2 border-l border-slate-800 pl-3 text-sky-300 font-medium animate-fade-in text-xs">
+              <MousePointer className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+              <span>選択移動モード：配置済みオブジェクトをクリックして選択し、ドラッグで位置を微調整できます（Deleteキーで削除）</span>
+            </div>
+          ) : activeTool === 'ruler' ? (
+            <div className="flex items-center gap-2 border-l border-slate-800 pl-3 text-emerald-300 font-medium animate-fade-in text-xs">
+              <Ruler className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span>物差しモード：図面上の2点間をドラッグして正確な実寸(mm)・ピクセル・角度を計測（Shiftキーで水平垂直ロック）</span>
+            </div>
+          ) : activeTool === 'draw_eraser' ? (
+            <div className="flex items-center gap-2 border-l border-slate-800 pl-3 text-rose-300 font-medium animate-fade-in text-xs">
+              <Eraser className="w-3.5 h-3.5 text-rose-400 shrink-0" />
               <span>消去モード：画面上の描画オブジェクト（文字・線・囲み・チェック）をクリックすると即座に消去できます</span>
             </div>
           ) : (

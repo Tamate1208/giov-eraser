@@ -1,12 +1,14 @@
 export type AppMode = 'eraser' | 'draw'
 
 export type DrawingTool =
+  | 'select'
   | 'text'
   | 'line'
   | 'rect'
   | 'polygon'
   | 'circle'
   | 'check'
+  | 'ruler'
   | 'draw_eraser'
   | 'arrow'
 
@@ -49,6 +51,7 @@ export type HistoryAction =
   | { type: 'remove_redaction'; redaction: any }
   | { type: 'add_drawing'; drawingId: string }
   | { type: 'remove_drawing'; drawing: DrawingItem }
+  | { type: 'move_drawing'; id: string; prev: Partial<DrawingItem> }
   | { type: 'clear_page'; redactions: any[]; drawings: DrawingItem[] }
   | { type: 'clear_all'; redactions: any[]; drawings: DrawingItem[] }
 

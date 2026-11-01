@@ -8,7 +8,44 @@ import {
   DrawingItem,
   Point,
 } from '../types/drawing'
-import { X, Eraser, Check, CornerDownLeft, Trash2 } from 'lucide-react'
+import { X, Eraser, Check, CornerDownLeft, Trash2, Move, Ruler, ArrowRight } from 'lucide-react'
+
+// 角度・スナップ計算ヘルパー (Shiftキー押下時: 水平・垂直・45度ロック、正方形・真円ロック)
+function applyShiftSnap(
+  startX: number,
+  startY: number,
+  currentX: number,
+  currentY: number,
+  tool: DrawingTool
+): { x: number; y: number } {
+  const dx = currentX - startX
+  const dy = currentY - startY
+
+  if (tool === 'rect' || tool === 'circle') {
+    const side = Math.max(Math.abs(dx), Math.abs(dy))
+    return {
+      x: startX + (dx >= 0 ? side : -side),
+      y: startY + (dy >= 0 ? side : -side),
+    }
+  }
+
+  // 直線・矢印・物差しのスナップ (水平、垂直、45度)
+  const angle = Math.atan2(Math.abs(dy), Math.abs(dx))
+  if (angle < Math.PI / 8) {
+    // 水平 (0度)
+    return { x: currentX, y: startY }
+  }
+  if (angle > (Math.PI * 3) / 8) {
+    // 垂直 (90度)
+    return { x: startX, y: currentY }
+  }
+  // 45度
+  const d = Math.max(Math.abs(dx), Math.abs(dy))
+  return {
+    x: startX + (dx >= 0 ? d : -d),
+    y: startY + (dy >= 0 ? d : -d),
+  }
+}
 
 // 数学的に確実な矢じりベクターパスを計算（始点・終点・両端対応）
 function getArrowHeadPath(
@@ -72,6 +109,7 @@ interface PdfViewerProps {
   onAddRedaction: (rect: Omit<RedactRect, 'id'>) => void;
   onRemoveRedaction: (id: string) => void;
   onAddDrawing: (item: Omit<DrawingItem, 'id'>) => void;
+  onUpdateDrawing?: (id: string, updates: Partial<DrawingItem>, recordHistory?: boolean) => void;
   onRemoveDrawing: (id: string) => void;
 }
 
@@ -93,6 +131,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   onAddRedaction,
   onRemoveRedaction,
   onAddDrawing,
+  onUpdateDrawing,
   onRemoveDrawing,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -109,6 +148,22 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     startY: number
     currentX: number
     currentY: number
+  } | null>(null)
+
+  // オブジェクトドラッグ移動用の state
+  const [movingDrawingId, setMovingDrawingId] = useState<string | null>(null)
+  const moveStartPointerRef = useRef<{ x: number; y: number } | null>(null)
+  const moveItemSnapshotRef = useRef<DrawingItem | null>(null)
+
+  // 物差し（寸法計測）確定時のバッジ表示用 state
+  const [rulerResult, setRulerResult] = useState<{
+    x1: number
+    y1: number
+    x2: number
+    y2: number
+    distMm: number
+    distPx: number
+    angleDeg: number
   } | null>(null)
 
   // 多角形描画用の頂点リスト
@@ -138,6 +193,113 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     setSelectedDrawingId(id)
   }
 
+  // 描画アイテム上でのポインターダウン処理（ドラッグ移動の開始）
+  const handleItemPointerDown = (item: DrawingItem, e: React.PointerEvent) => {
+    if (appMode === 'draw' && activeTool === 'draw_eraser') {
+      // 描画消しゴムはクリック時に削除するためここでは移動開始しない
+      return
+    }
+    // 選択移動ツール中、または既に選択されているアイテムならドラッグ移動開始
+    if (activeTool === 'select' || selectedDrawingId === item.id) {
+      e.stopPropagation()
+      setSelectedDrawingId(item.id)
+      setMovingDrawingId(item.id)
+      moveStartPointerRef.current = { x: e.clientX, y: e.clientY }
+      moveItemSnapshotRef.current = JSON.parse(JSON.stringify(item))
+    }
+  }
+
+  // オブジェクトドラッグ移動中のグローバルポインター追従と確定
+  useEffect(() => {
+    if (!movingDrawingId) return
+
+    const handleGlobalPointerMove = (e: PointerEvent) => {
+      if (!moveItemSnapshotRef.current || !moveStartPointerRef.current) return
+      const deltaX = (e.clientX - moveStartPointerRef.current.x) / zoom / 1.5
+      const deltaY = (e.clientY - moveStartPointerRef.current.y) / zoom / 1.5
+
+      const snap = moveItemSnapshotRef.current
+      let updates: Partial<DrawingItem> = {}
+
+      if (snap.tool === 'line' || snap.tool === 'arrow') {
+        if (snap.points && snap.points.length >= 2) {
+          updates = {
+            points: snap.points.map((p) => ({
+              x: Math.round((p.x + deltaX) * 10) / 10,
+              y: Math.round((p.y + deltaY) * 10) / 10,
+            })),
+          }
+        }
+      } else if (snap.tool === 'polygon') {
+        if (snap.points) {
+          updates = {
+            points: snap.points.map((p) => ({
+              x: Math.round((p.x + deltaX) * 10) / 10,
+              y: Math.round((p.y + deltaY) * 10) / 10,
+            })),
+          }
+        }
+      } else {
+        updates = {
+          x: Math.round(((snap.x ?? 0) + deltaX) * 10) / 10,
+          y: Math.round(((snap.y ?? 0) + deltaY) * 10) / 10,
+        }
+      }
+
+      onUpdateDrawing?.(movingDrawingId, updates, false)
+    }
+
+    const handleGlobalPointerUp = (e: PointerEvent) => {
+      if (moveItemSnapshotRef.current && moveStartPointerRef.current) {
+        const deltaX = (e.clientX - moveStartPointerRef.current.x) / zoom / 1.5
+        const deltaY = (e.clientY - moveStartPointerRef.current.y) / zoom / 1.5
+
+        if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5) {
+          const snap = moveItemSnapshotRef.current
+          let updates: Partial<DrawingItem> = {}
+
+          if (snap.tool === 'line' || snap.tool === 'arrow') {
+            if (snap.points && snap.points.length >= 2) {
+              updates = {
+                points: snap.points.map((p) => ({
+                  x: Math.round((p.x + deltaX) * 10) / 10,
+                  y: Math.round((p.y + deltaY) * 10) / 10,
+                })),
+              }
+            }
+          } else if (snap.tool === 'polygon') {
+            if (snap.points) {
+              updates = {
+                points: snap.points.map((p) => ({
+                  x: Math.round((p.x + deltaX) * 10) / 10,
+                  y: Math.round((p.y + deltaY) * 10) / 10,
+                })),
+              }
+            }
+          } else {
+            updates = {
+              x: Math.round(((snap.x ?? 0) + deltaX) * 10) / 10,
+              y: Math.round(((snap.y ?? 0) + deltaY) * 10) / 10,
+            }
+          }
+          // 履歴記録付きで確定
+          onUpdateDrawing?.(movingDrawingId, updates, true)
+        }
+      }
+
+      setMovingDrawingId(null)
+      moveStartPointerRef.current = null
+      moveItemSnapshotRef.current = null
+    }
+
+    window.addEventListener('pointermove', handleGlobalPointerMove)
+    window.addEventListener('pointerup', handleGlobalPointerUp)
+    return () => {
+      window.removeEventListener('pointermove', handleGlobalPointerMove)
+      window.removeEventListener('pointerup', handleGlobalPointerUp)
+    }
+  }, [movingDrawingId, zoom, onUpdateDrawing])
+
   // 選択中アイテムの Delete / BackSpace キー削除
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -149,11 +311,50 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         setSelectedDrawingId(null)
       } else if (e.key === 'Escape') {
         setSelectedDrawingId(null)
+        setRulerResult(null)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [selectedDrawingId, textInput, onRemoveDrawing])
+
+  // 物差しの計測結果を図面に寸法線＋テキストとして書き残す
+  const handleBakeRulerToDrawing = () => {
+    if (!rulerResult || !pageInfo) return
+
+    // 1. 両端矢印の寸法線を追加
+    onAddDrawing({
+      pageIndex: pageInfo.index,
+      tool: 'line',
+      color: '#10b981',
+      lineWidth: 2,
+      fontSize: 12,
+      fillMode: 'none',
+      arrowHead: 'both',
+      points: [
+        { x: rulerResult.x1 / 1.5, y: rulerResult.y1 / 1.5 },
+        { x: rulerResult.x2 / 1.5, y: rulerResult.y2 / 1.5 },
+      ],
+    })
+
+    // 2. 寸法テキストを追加（中央に白背景付き）
+    const midX = (rulerResult.x1 + rulerResult.x2) / 2 / 1.5
+    const midY = (rulerResult.y1 + rulerResult.y2) / 2 / 1.5
+    onAddDrawing({
+      pageIndex: pageInfo.index,
+      tool: 'text',
+      color: '#10b981',
+      fillMode: 'none',
+      lineWidth: 1,
+      fontSize: 12,
+      text: `${rulerResult.distMm} mm`,
+      bgWhite: true,
+      x: midX - 25,
+      y: midY - 6,
+    })
+
+    setRulerResult(null)
+  }
 
   // テキスト入力の確定
   const handleConfirmText = () => {
@@ -223,9 +424,19 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     const relX = (e.clientX - rect.left) / zoom
     const relY = (e.clientY - rect.top) / zoom
 
+    // 描画モード: 選択移動ツール（オブジェクトをクリックして動かすため、背景ドラッグは行わない）
+    if (appMode === 'draw' && activeTool === 'select') {
+      return
+    }
+
     // 描画モード: 描画消しゴム（ドラッグ操作不要、描画要素をクリックして削除）
     if (appMode === 'draw' && activeTool === 'draw_eraser') {
       return
+    }
+
+    // 描画モード: 物差し（前回の計測結果をクリアして新規計測開始）
+    if (appMode === 'draw' && activeTool === 'ruler') {
+      setRulerResult(null)
     }
 
     // 描画モード: テキスト
@@ -272,7 +483,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       return
     }
 
-    // それ以外のツール（消しゴム、直線、矩形、丸）はドラッグ開始
+    // それ以外のツール（消しゴム、直線、矩形、丸、物差し）はドラッグ開始
     isDraggingRef.current = true
     dragStartRef.current = { x: relX, y: relY }
     dragCurrentRef.current = { x: relX, y: relY }
@@ -300,12 +511,35 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     if (!isDraggingRef.current || !dragStartRef.current) return
     e.preventDefault()
 
-    dragCurrentRef.current = { x: relX, y: relY }
+    let curX = relX
+    let curY = relY
+
+    // Shiftキー押下時のスナップ（直線・矢印・矩形・丸・物差し）
+    if (
+      e.shiftKey &&
+      (activeTool === 'line' ||
+        activeTool === 'arrow' ||
+        activeTool === 'rect' ||
+        activeTool === 'circle' ||
+        activeTool === 'ruler')
+    ) {
+      const snapped = applyShiftSnap(
+        dragStartRef.current.x,
+        dragStartRef.current.y,
+        relX,
+        relY,
+        activeTool
+      )
+      curX = snapped.x
+      curY = snapped.y
+    }
+
+    dragCurrentRef.current = { x: curX, y: curY }
     setDragPreview({
       startX: dragStartRef.current.x,
       startY: dragStartRef.current.y,
-      currentX: relX,
-      currentY: relY,
+      currentX: curX,
+      currentY: curY,
     })
   }
 
@@ -326,16 +560,33 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       e.currentTarget.releasePointerCapture(e.pointerId)
     } catch {}
 
-    const dx = Math.abs(current.x - start.x)
-    const dy = Math.abs(current.y - start.y)
+    let endX = current.x
+    let endY = current.y
 
-    // 最小4pxドラッグした場合のみ追加
-    if (dx < 4 && dy < 4) return
+    // Shiftキー押下時のスナップ
+    if (
+      e.shiftKey &&
+      (activeTool === 'line' ||
+        activeTool === 'arrow' ||
+        activeTool === 'rect' ||
+        activeTool === 'circle' ||
+        activeTool === 'ruler')
+    ) {
+      const snapped = applyShiftSnap(start.x, start.y, endX, endY, activeTool)
+      endX = snapped.x
+      endY = snapped.y
+    }
 
-    const minX = Math.min(start.x, current.x)
-    const maxX = Math.max(start.x, current.x)
-    const minY = Math.min(start.y, current.y)
-    const maxY = Math.max(start.y, current.y)
+    const dx = Math.abs(endX - start.x)
+    const dy = Math.abs(endY - start.y)
+
+    // 最小3pxドラッグした場合のみ追加
+    if (dx < 3 && dy < 3) return
+
+    const minX = Math.min(start.x, endX)
+    const maxX = Math.max(start.x, endX)
+    const minY = Math.min(start.y, endY)
+    const maxY = Math.max(start.y, endY)
 
     if (appMode === 'eraser') {
       // 消しゴム枠の追加
@@ -348,6 +599,29 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         color: colorMode,
       })
     } else if (appMode === 'draw') {
+      // 物差しツール: 寸法計測結果の登録
+      if (activeTool === 'ruler') {
+        const dxPx = endX - start.x
+        const dyPx = endY - start.y
+        const distPx = Math.hypot(dxPx, dyPx)
+        if (distPx < 3) return
+        const distPt = distPx / 1.5
+        const distMm = distPt * (25.4 / 72)
+        let angleDeg = Math.round((Math.atan2(dyPx, dxPx) * 180) / Math.PI)
+        if (angleDeg < 0) angleDeg += 360
+
+        setRulerResult({
+          x1: start.x,
+          y1: start.y,
+          x2: endX,
+          y2: endY,
+          distMm: Math.round(distMm * 10) / 10,
+          distPx: Math.round(distPx),
+          angleDeg,
+        })
+        return
+      }
+
       // 描画アイテムの追加
       if (activeTool === 'line' || activeTool === 'arrow') {
         onAddDrawing({
@@ -360,7 +634,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
           arrowHead: arrowHead,
           points: [
             { x: start.x / 1.5, y: start.y / 1.5 },
-            { x: current.x / 1.5, y: current.y / 1.5 },
+            { x: endX / 1.5, y: endY / 1.5 },
           ],
         })
       } else if (activeTool === 'rect') {
@@ -468,8 +742,14 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 return (
                   <g
                     key={item.id}
-                    className={`pointer-events-auto cursor-pointer group ${isEraserMode ? 'hover:opacity-60' : ''}`}
-                    onPointerDown={(e) => e.stopPropagation()}
+                    className={`pointer-events-auto group ${
+                      isEraserMode
+                        ? 'cursor-pointer hover:opacity-60'
+                        : activeTool === 'select' || isSelected
+                        ? 'cursor-move'
+                        : 'cursor-pointer'
+                    }`}
+                    onPointerDown={(e) => handleItemPointerDown(item, e)}
                     onClick={(e) => handleItemClick(item.id, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
@@ -523,10 +803,18 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       />
                     )}
 
+                    {/* 選択中かつ選択ツールの移動可能バッジ */}
+                    {isSelected && !isEraserMode && activeTool === 'select' && (
+                      <g transform={`translate(${midX}, ${midY})`} className="pointer-events-none opacity-90 shadow-md">
+                        <circle cx="0" cy="0" r="9" fill="#0284c7" stroke="#ffffff" strokeWidth="1.5" />
+                        <path d="M -4 0 L 4 0 M 0 -4 L 0 4 M -4 0 L -2 -2 M -4 0 L -2 2 M 4 0 L 2 -2 M 4 0 L 2 2 M 0 -4 L -2 -2 M 0 -4 L 2 -2 M 0 4 L -2 2 M 0 4 L 2 2" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                      </g>
+                    )}
+
                     {/* 選択時・ホバー時の削除ボタン */}
                     {(isHovered || isSelected) && (
                       <g
-                        transform={`translate(${midX}, ${midY})`}
+                        transform={`translate(${midX + (isSelected && activeTool === 'select' ? 18 : 0)}, ${midY})`}
                         onClick={(e) => {
                           e.stopPropagation()
                           onRemoveDrawing(item.id)
@@ -561,8 +849,14 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 return (
                   <g
                     key={item.id}
-                    className={`pointer-events-auto cursor-pointer group ${isEraserMode ? 'hover:opacity-60' : ''}`}
-                    onPointerDown={(e) => e.stopPropagation()}
+                    className={`pointer-events-auto group ${
+                      isEraserMode
+                        ? 'cursor-pointer hover:opacity-60'
+                        : activeTool === 'select' || isSelected
+                        ? 'cursor-move'
+                        : 'cursor-pointer'
+                    }`}
+                    onPointerDown={(e) => handleItemPointerDown(item, e)}
                     onClick={(e) => handleItemClick(item.id, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
@@ -603,6 +897,15 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       stroke={isEraserMode && isHovered ? '#ef4444' : item.color}
                       strokeWidth={item.lineWidth}
                     />
+
+                    {/* 選択中かつ選択ツールの移動可能バッジ */}
+                    {isSelected && !isEraserMode && activeTool === 'select' && (
+                      <g transform={`translate(${rx + rw / 2}, ${ry + rh / 2})`} className="pointer-events-none opacity-90 shadow-md">
+                        <circle cx="0" cy="0" r="9" fill="#0284c7" stroke="#ffffff" strokeWidth="1.5" />
+                        <path d="M -4 0 L 4 0 M 0 -4 L 0 4 M -4 0 L -2 -2 M -4 0 L -2 2 M 4 0 L 2 -2 M 4 0 L 2 2 M 0 -4 L -2 -2 M 0 -4 L 2 -2 M 0 4 L -2 2 M 0 4 L 2 2" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                      </g>
+                    )}
+
                     {(isHovered || isSelected) && (
                       <g
                         transform={`translate(${rx + rw}, ${ry})`}
@@ -640,8 +943,14 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 return (
                   <g
                     key={item.id}
-                    className={`pointer-events-auto cursor-pointer group ${isEraserMode ? 'hover:opacity-60' : ''}`}
-                    onPointerDown={(e) => e.stopPropagation()}
+                    className={`pointer-events-auto group ${
+                      isEraserMode
+                        ? 'cursor-pointer hover:opacity-60'
+                        : activeTool === 'select' || isSelected
+                        ? 'cursor-move'
+                        : 'cursor-pointer'
+                    }`}
+                    onPointerDown={(e) => handleItemPointerDown(item, e)}
                     onClick={(e) => handleItemClick(item.id, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
@@ -680,6 +989,15 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       stroke={isEraserMode && isHovered ? '#ef4444' : item.color}
                       strokeWidth={item.lineWidth}
                     />
+
+                    {/* 選択中かつ選択ツールの移動可能バッジ */}
+                    {isSelected && !isEraserMode && activeTool === 'select' && (
+                      <g transform={`translate(${cx}, ${cy})`} className="pointer-events-none opacity-90 shadow-md">
+                        <circle cx="0" cy="0" r="9" fill="#0284c7" stroke="#ffffff" strokeWidth="1.5" />
+                        <path d="M -4 0 L 4 0 M 0 -4 L 0 4 M -4 0 L -2 -2 M -4 0 L -2 2 M 4 0 L 2 -2 M 4 0 L 2 2 M 0 -4 L -2 -2 M 0 -4 L 2 -2 M 0 4 L -2 2 M 0 4 L 2 2" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                      </g>
+                    )}
+
                     {(isHovered || isSelected) && (
                       <g
                         transform={`translate(${cx + rx}, ${cy})`}
@@ -710,11 +1028,21 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     : 'none'
                 const fillOpacity = item.fillMode === 'semi' ? 0.25 : item.fillMode === 'solid' ? 1 : 0
 
+                // 中心座標の概算
+                const avgX = (item.points.reduce((s, p) => s + p.x, 0) / item.points.length) * 1.5
+                const avgY = (item.points.reduce((s, p) => s + p.y, 0) / item.points.length) * 1.5
+
                 return (
                   <g
                     key={item.id}
-                    className={`pointer-events-auto cursor-pointer group ${isEraserMode ? 'hover:opacity-60' : ''}`}
-                    onPointerDown={(e) => e.stopPropagation()}
+                    className={`pointer-events-auto group ${
+                      isEraserMode
+                        ? 'cursor-pointer hover:opacity-60'
+                        : activeTool === 'select' || isSelected
+                        ? 'cursor-move'
+                        : 'cursor-pointer'
+                    }`}
+                    onPointerDown={(e) => handleItemPointerDown(item, e)}
                     onClick={(e) => handleItemClick(item.id, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
@@ -745,6 +1073,15 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       strokeWidth={item.lineWidth}
                       strokeLinejoin="round"
                     />
+
+                    {/* 選択中かつ選択ツールの移動可能バッジ */}
+                    {isSelected && !isEraserMode && activeTool === 'select' && (
+                      <g transform={`translate(${avgX}, ${avgY})`} className="pointer-events-none opacity-90 shadow-md">
+                        <circle cx="0" cy="0" r="9" fill="#0284c7" stroke="#ffffff" strokeWidth="1.5" />
+                        <path d="M -4 0 L 4 0 M 0 -4 L 0 4 M -4 0 L -2 -2 M -4 0 L -2 2 M 4 0 L 2 -2 M 4 0 L 2 2 M 0 -4 L -2 -2 M 0 -4 L 2 -2 M 0 4 L -2 2 M 0 4 L 2 2" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                      </g>
+                    )}
+
                     {(isHovered || isSelected) && (
                       <g
                         transform={`translate(${item.points[0].x * 1.5}, ${item.points[0].y * 1.5})`}
@@ -773,8 +1110,14 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 return (
                   <g
                     key={item.id}
-                    className={`pointer-events-auto cursor-pointer group ${isEraserMode ? 'hover:opacity-60' : ''}`}
-                    onPointerDown={(e) => e.stopPropagation()}
+                    className={`pointer-events-auto group ${
+                      isEraserMode
+                        ? 'cursor-pointer hover:opacity-60'
+                        : activeTool === 'select' || isSelected
+                        ? 'cursor-move'
+                        : 'cursor-pointer'
+                    }`}
+                    onPointerDown={(e) => handleItemPointerDown(item, e)}
                     onClick={(e) => handleItemClick(item.id, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
@@ -813,6 +1156,15 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
+
+                    {/* 選択中かつ選択ツールの移動可能バッジ */}
+                    {isSelected && !isEraserMode && activeTool === 'select' && (
+                      <g transform={`translate(${ox + s / 2}, ${oy + s / 2})`} className="pointer-events-none opacity-90 shadow-md">
+                        <circle cx="0" cy="0" r="8" fill="#0284c7" stroke="#ffffff" strokeWidth="1.5" />
+                        <path d="M -3 0 L 3 0 M 0 -3 L 0 3" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" fill="none" />
+                      </g>
+                    )}
+
                     {(isHovered || isSelected) && (
                       <g
                         transform={`translate(${ox + s}, ${oy})`}
@@ -842,8 +1194,14 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 return (
                   <g
                     key={item.id}
-                    className={`pointer-events-auto cursor-pointer group ${isEraserMode ? 'hover:opacity-60' : ''}`}
-                    onPointerDown={(e) => e.stopPropagation()}
+                    className={`pointer-events-auto group ${
+                      isEraserMode
+                        ? 'cursor-pointer hover:opacity-60'
+                        : activeTool === 'select' || isSelected
+                        ? 'cursor-move'
+                        : 'cursor-pointer'
+                    }`}
+                    onPointerDown={(e) => handleItemPointerDown(item, e)}
                     onClick={(e) => handleItemClick(item.id, e)}
                     onMouseEnter={() => setHoveredDrawingId(item.id)}
                     onMouseLeave={() => setHoveredDrawingId(null)}
@@ -895,6 +1253,15 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     >
                       {item.text}
                     </text>
+
+                    {/* 選択中かつ選択ツールの移動可能バッジ */}
+                    {isSelected && !isEraserMode && activeTool === 'select' && (
+                      <g transform={`translate(${tx + estW / 2}, ${ty - fontPx / 2})`} className="pointer-events-none opacity-90 shadow-md">
+                        <circle cx="0" cy="0" r="8" fill="#0284c7" stroke="#ffffff" strokeWidth="1.5" />
+                        <path d="M -3 0 L 3 0 M 0 -3 L 0 3" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" fill="none" />
+                      </g>
+                    )}
+
                     {(isHovered || isSelected) && (
                       <g
                         transform={`translate(${tx - 8}, ${ty - fontPx / 2})`}
@@ -952,7 +1319,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
               </g>
             )}
 
-            {/* ドラッグ中のプレビュー描画（矢印、直線、矩形、丸） */}
+            {/* ドラッグ中のプレビュー描画（矢印、直線、矩形、丸、物差し） */}
             {dragPreview && appMode === 'draw' && (
               <g style={{ color: drawColor }}>
                 {(activeTool === 'arrow' || activeTool === 'line') && (
@@ -1023,8 +1390,151 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     strokeDasharray="4 2"
                   />
                 )}
+                {/* 物差しドラッグ中のリアルタイムプレビュー */}
+                {activeTool === 'ruler' && (() => {
+                  const x1 = dragPreview.startX
+                  const y1 = dragPreview.startY
+                  const x2 = dragPreview.currentX
+                  const y2 = dragPreview.currentY
+                  const dx = x2 - x1
+                  const dy = y2 - y1
+                  const len = Math.hypot(dx, dy)
+                  if (len < 2) return null
+
+                  const distPt = len / 1.5
+                  const distMm = (distPt * (25.4 / 72)).toFixed(1)
+
+                  const barLen = 14
+                  const nx = (-dy / len) * (barLen / 2)
+                  const ny = (dx / len) * (barLen / 2)
+
+                  const midX = (x1 + x2) / 2
+                  const midY = (y1 + y2) / 2
+
+                  return (
+                    <g>
+                      <line
+                        x1={x1}
+                        y1={y1}
+                        x2={x2}
+                        y2={y2}
+                        stroke="#10b981"
+                        strokeWidth="2"
+                        strokeDasharray="4 2"
+                      />
+                      <line
+                        x1={x1 - nx}
+                        y1={y1 - ny}
+                        x2={x1 + nx}
+                        y2={y1 + ny}
+                        stroke="#10b981"
+                        strokeWidth="2"
+                      />
+                      <line
+                        x1={x2 - nx}
+                        y1={y2 - ny}
+                        x2={x2 + nx}
+                        y2={y2 + ny}
+                        stroke="#10b981"
+                        strokeWidth="2"
+                      />
+                      <circle cx={x1} cy={y1} r="3" fill="#10b981" />
+                      <circle cx={x2} cy={y2} r="3" fill="#10b981" />
+
+                      <g transform={`translate(${midX}, ${midY - 14})`}>
+                        <rect
+                          x="-55"
+                          y="-11"
+                          width="110"
+                          height="22"
+                          rx="4"
+                          fill="#0f172a"
+                          stroke="#10b981"
+                          strokeWidth="1.5"
+                          className="shadow-lg"
+                        />
+                        <text
+                          x="0"
+                          y="4"
+                          fill="#34d399"
+                          fontSize="11"
+                          fontWeight="bold"
+                          textAnchor="middle"
+                          fontFamily="ui-monospace, monospace"
+                        >
+                          {distMm} mm ({Math.round(len)}px)
+                        </text>
+                      </g>
+                    </g>
+                  )
+                })()}
               </g>
             )}
+
+            {/* 確定した物差しの寸法線表示 */}
+            {rulerResult && (() => {
+              const { x1, y1, x2, y2 } = rulerResult
+              const dx = x2 - x1
+              const dy = y2 - y1
+              const len = Math.hypot(dx, dy)
+              if (len < 2) return null
+
+              const barLen = 16
+              const nx = (-dy / len) * (barLen / 2)
+              const ny = (dx / len) * (barLen / 2)
+
+              const arrowPath = getArrowHeadPath(x1, y1, x2, y2, 2, 'both')
+
+              return (
+                <g className="pointer-events-auto">
+                  <line
+                    x1={x1}
+                    y1={y1}
+                    x2={x2}
+                    y2={y2}
+                    stroke="#10b981"
+                    strokeWidth="6"
+                    strokeOpacity="0.25"
+                  />
+                  <line
+                    x1={x1}
+                    y1={y1}
+                    x2={x2}
+                    y2={y2}
+                    stroke="#10b981"
+                    strokeWidth="2"
+                  />
+                  <line
+                    x1={x1 - nx}
+                    y1={y1 - ny}
+                    x2={x1 + nx}
+                    y2={y1 + ny}
+                    stroke="#10b981"
+                    strokeWidth="2.5"
+                  />
+                  <line
+                    x1={x2 - nx}
+                    y1={y2 - ny}
+                    x2={x2 + nx}
+                    y2={y2 + ny}
+                    stroke="#10b981"
+                    strokeWidth="2.5"
+                  />
+                  {arrowPath && (
+                    <path
+                      d={arrowPath}
+                      stroke="#10b981"
+                      strokeWidth="2"
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  )}
+                  <circle cx={x1} cy={y1} r="3" fill="#10b981" />
+                  <circle cx={x2} cy={y2} r="3" fill="#10b981" />
+                </g>
+              )
+            })()}
           </svg>
 
           {/* ドラッグ操作専用オーバーレイ (PointerCapture) */}
@@ -1043,6 +1553,10 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
             className={`absolute inset-0 select-none z-10 ${
               appMode === 'eraser'
                 ? 'cursor-crosshair'
+                : activeTool === 'select'
+                ? 'cursor-default'
+                : activeTool === 'ruler'
+                ? 'cursor-crosshair'
                 : activeTool === 'text'
                 ? 'cursor-text'
                 : activeTool === 'check'
@@ -1054,6 +1568,10 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
             title={
               appMode === 'eraser'
                 ? 'マウスドラッグで消去したい範囲を囲んでください'
+                : activeTool === 'select'
+                ? '描画オブジェクトをクリックまたはドラッグして移動できます（Deleteキーで削除）'
+                : activeTool === 'ruler'
+                ? 'ドラッグして2点間の実寸(mm)・ピクセル・角度を計測します（Shiftキーで水平・垂直固定）'
                 : activeTool === 'text'
                 ? 'クリックしてテキストを入力'
                 : activeTool === 'polygon'
@@ -1062,7 +1580,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                 ? 'クリックしてチェックマークを配置'
                 : activeTool === 'draw_eraser'
                 ? '画面上の描画オブジェクトをクリックすると即座に消去できます'
-                : 'ドラッグして描画'
+                : 'ドラッグして描画（Shiftキーで水平・垂直・正円・正方形に固定）'
             }
           >
             {/* 消しゴムドラッグ中のプレビュー枠 */}
@@ -1087,6 +1605,58 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
               </div>
             )}
           </div>
+
+          {/* 物差し確定時の計測結果・図面反映ポップアップバッジ */}
+          {rulerResult && (
+            <div
+              style={{
+                left: `${(rulerResult.x1 + rulerResult.x2) / 2}px`,
+                top: `${(rulerResult.y1 + rulerResult.y2) / 2}px`,
+                transform: 'translate(-50%, -120%)',
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="absolute z-30 bg-slate-900/95 border-2 border-emerald-500 rounded-xl px-3 py-2 shadow-2xl flex items-center gap-3 backdrop-blur-md animate-fade-in ring-2 ring-emerald-500/20"
+            >
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-400">
+                  <Ruler className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm font-bold text-emerald-300 font-mono tracking-tight">
+                      {rulerResult.distMm.toFixed(1)} mm
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-mono">
+                      ({rulerResult.distPx} px)
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 font-mono">
+                    角度: {rulerResult.angleDeg}°
+                  </div>
+                </div>
+              </div>
+
+              <div className="h-7 w-[1px] bg-slate-700" />
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={handleBakeRulerToDrawing}
+                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1 text-[11px] shadow-sm transition transform active:scale-95 cursor-pointer"
+                  title="この寸法線と数値を校正描画として図面に書き残します"
+                >
+                  <ArrowRight className="w-3 h-3" />
+                  図面に残す
+                </button>
+                <button
+                  onClick={() => setRulerResult(null)}
+                  className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
+                  title="計測バッジを閉じる"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* テキスト入力ポップアップ */}
           {textInput && (
