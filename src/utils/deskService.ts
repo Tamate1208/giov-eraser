@@ -90,10 +90,19 @@ export async function buildMergedPdfFromDesk(
         } catch {}
         const finalRot = (((baseRot + item.rotation) % 360) + 360) % 360
         lastPage.getObject().put('Rotate', newDoc.newInteger(finalRot))
+        lastPage.destroy()
       }
     }
   }
 
-  const u8 = newDoc.saveToBuffer('clean,garbage').asUint8Array()
-  return new Uint8Array(u8)
+  const outBuf = newDoc.saveToBuffer('clean,garbage')
+  const u8 = new Uint8Array(outBuf.asUint8Array())
+  try {
+    outBuf.destroy()
+    newDoc.destroy()
+    for (const d of openDocs.values()) {
+      d.destroy()
+    }
+  } catch {}
+  return u8
 }

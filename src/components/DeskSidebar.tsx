@@ -72,9 +72,28 @@ export const DeskSidebar: React.FC<DeskSidebarProps> = ({
 
   const cols = width < 320 ? 1 : width < 480 ? 2 : 3
 
-  // アイテムのサムネイルを非同期生成
+  // アイテムのサムネイルを非同期生成 ＆ 削除されたアイテムの ObjectURL をメモリ解放
   useEffect(() => {
     let active = true
+    const activeKeys = new Set(items.map((item) => `${item.id}_rot${item.rotation}`))
+
+    setThumbnails((prev) => {
+      let changed = false
+      const next = new Map(prev)
+      for (const [k, url] of next.entries()) {
+        if (!activeKeys.has(k)) {
+          if (url && url.startsWith('blob:')) {
+            try {
+              URL.revokeObjectURL(url)
+            } catch {}
+          }
+          next.delete(k)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+
     items.forEach(async (item) => {
       const key = `${item.id}_rot${item.rotation}`
       if (thumbnails.has(key)) return
@@ -83,7 +102,11 @@ export const DeskSidebar: React.FC<DeskSidebarProps> = ({
       if (!doc) return
 
       const url = await generateDeskItemThumbnail(doc.bytes, item.pageIndex, item.rotation)
-      if (active && url) {
+      if (!active) {
+        if (url && url.startsWith('blob:')) URL.revokeObjectURL(url)
+        return
+      }
+      if (url) {
         setThumbnails((prev) => new Map(prev).set(key, url))
       }
     })

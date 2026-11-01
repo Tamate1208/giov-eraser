@@ -27,7 +27,11 @@ async function decompressGzipBase64(base64: string): Promise<Uint8Array> {
 // Wasm メモリのビューから JS の独立した TypedArray に安全にクローン（Wasmヒープ拡張時の Detached ArrayBuffer を防止）
 function toSafeUint8Array(buf: any): Uint8Array {
   const u8 = buf.asUint8Array();
-  return new Uint8Array(u8);
+  const copy = new Uint8Array(u8);
+  try {
+    buf.destroy();
+  } catch {}
+  return copy;
 }
 
 export async function getMuPdf() {
@@ -111,7 +115,9 @@ export async function getPdfInfo(
       height: isSideways ? rawW : rawH,
       rotation: effectiveRot,
     });
+    page.destroy();
   }
+  doc.destroy();
 
   return { numPages, pages };
 }
@@ -141,7 +147,10 @@ export async function renderPageImage(
 
   const matrix = m.Matrix.scale(scale, scale);
   const pixmap = page.toPixmap(matrix, m.ColorSpace.DeviceRGB, false);
-  const pngBytes = pixmap.asPNG();
+  const pngBytes = new Uint8Array(pixmap.asPNG());
+  pixmap.destroy();
+  page.destroy();
+  doc.destroy();
 
   const blob = new Blob([pngBytes.buffer as ArrayBuffer], { type: 'image/png' });
   return URL.createObjectURL(blob);
@@ -154,6 +163,7 @@ export async function loadPdfBookmarks(pdfBytes: Uint8Array): Promise<BookmarkIt
   const m = await getMuPdf();
   const doc = m.Document.openDocument(pdfBytes, 'application/pdf');
   const outline = doc.loadOutline();
+  doc.destroy();
   if (!outline || outline.length === 0) return [];
 
   let idCounter = 1;
@@ -191,9 +201,12 @@ export async function mergePdfFiles(
     for (let i = 0; i < srcPageCount; i++) {
       targetDoc.graftPage(targetDoc.countPages(), srcDoc, i);
     }
+    srcDoc.destroy();
   }
 
-  return toSafeUint8Array(targetDoc.saveToBuffer('clean,garbage'));
+  const out = toSafeUint8Array(targetDoc.saveToBuffer('clean,garbage'));
+  targetDoc.destroy();
+  return out;
 }
 
 /**
@@ -223,11 +236,15 @@ export async function extractPages(
         } catch {}
         const finalRot = (((baseRot + rot) % 360) + 360) % 360;
         lastPage.getObject().put('Rotate', newDoc.newInteger(finalRot));
+        lastPage.destroy();
       }
     }
   }
 
-  return toSafeUint8Array(newDoc.saveToBuffer('clean,garbage'));
+  const out = toSafeUint8Array(newDoc.saveToBuffer('clean,garbage'));
+  newDoc.destroy();
+  srcDoc.destroy();
+  return out;
 }
 
 /**
@@ -248,7 +265,9 @@ export async function deletePagesFromPdf(
     }
   }
 
-  return toSafeUint8Array(doc.saveToBuffer('clean,garbage'));
+  const out = toSafeUint8Array(doc.saveToBuffer('clean,garbage'));
+  doc.destroy();
+  return out;
 }
 
 /**
@@ -266,6 +285,8 @@ export async function searchPageKeyword(
 
   const hits = page.search(keyword);
   const bounds = page.getBounds();
+  page.destroy();
+  doc.destroy();
   const pageW = bounds[2] - bounds[0];
   const pageH = bounds[3] - bounds[1];
   const rects: Array<[number, number, number, number]> = [];
@@ -305,8 +326,10 @@ export async function extractTextRectsInBBox(
   const page = doc.loadPage(pageIndex);
   const textPage = page.toStructuredText();
   const json = JSON.parse(textPage.asJSON());
-
   const bounds = page.getBounds();
+  textPage.destroy();
+  page.destroy();
+  doc.destroy();
   const pageW = bounds[2] - bounds[0];
   const pageH = bounds[3] - bounds[1];
   const rects: Array<[number, number, number, number]> = [];
@@ -850,5 +873,6 @@ export async function applyRedactions(
 
   // クリーンなPDFとして保存 (不要オブジェクト・切り取られたストリームの完全ガベージコレクション)
   const cleanDocBytes = toSafeUint8Array(doc.saveToBuffer('clean,garbage'));
+  doc.destroy();
   return cleanDocBytes;
 }

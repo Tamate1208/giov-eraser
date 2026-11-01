@@ -115,9 +115,61 @@ export default function App() {
   const [deskDocs, setDeskDocs] = useState<Map<string, DeskDoc>>(new Map())
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const loadGenRef = useRef<number>(0)
+
+  // 古い ObjectURL を安全にメモリ解放するヘルパー
+  const revokeUrlMap = (map: Map<number, string>) => {
+    for (const url of map.values()) {
+      if (url && url.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(url)
+        } catch {}
+      }
+    }
+  }
+
+  // サムネイルをバックグラウンドで4ページずつ段階生成するヘルパー（初期表示をブロックしない）
+  const generateThumbnailsInBatches = async (
+    bytes: Uint8Array,
+    pages: { index: number }[],
+    rotations: Record<number, number>,
+    genId: number
+  ) => {
+    const BATCH_SIZE = 4
+    for (let i = 0; i < pages.length; i += BATCH_SIZE) {
+      if (loadGenRef.current !== genId) return
+      const slice = pages.slice(i, i + BATCH_SIZE)
+      const batchResults = await Promise.all(
+        slice.map(async (p) => {
+          const rot = rotations[p.index] || 0
+          const thumb = await renderPageImage(bytes, p.index, 0.3, rot)
+          return [p.index, thumb] as [number, string]
+        })
+      )
+      if (loadGenRef.current !== genId) {
+        // 途中で別PDFが開かれた場合は生成したURLを即座に破棄
+        for (const [, url] of batchResults) {
+          if (url.startsWith('blob:')) URL.revokeObjectURL(url)
+        }
+        return
+      }
+      setThumbnails((prev) => {
+        const next = new Map(prev)
+        for (const [idx, url] of batchResults) {
+          const oldUrl = next.get(idx)
+          if (oldUrl && oldUrl !== url && oldUrl.startsWith('blob:')) {
+            URL.revokeObjectURL(oldUrl)
+          }
+          next.set(idx, url)
+        }
+        return next
+      })
+    }
+  }
 
   // PDF ファイルのロード処理
   const loadPdf = async (file: File) => {
+    const genId = ++loadGenRef.current
     try {
       setIsLoadingPdf(true)
       setFileName(file.name)
@@ -139,24 +191,27 @@ export default function App() {
       setDrawings([])
       setHistory([])
       setLastAddedRect(null)
-      setPageImages(new Map())
-      setThumbnails(new Map())
+      setPageImages((prev) => {
+        revokeUrlMap(prev)
+        return new Map()
+      })
+      setThumbnails((prev) => {
+        revokeUrlMap(prev)
+        return new Map()
+      })
 
-      // 最初のページの高画質画像と、サムネイルを非同期読み込み
+      // 最初のページの高画質画像を生成した時点で即座に画面を表示！
       const firstPageImg = await renderPageImage(bytes, 0, 1.5)
       setPageImages(new Map([[0, firstPageImg]]))
+      setIsLoadingPdf(false)
 
-      // サムネイル生成
-      const thumbPromises = info.pages.map(async (p) => {
-        const thumb = await renderPageImage(bytes, p.index, 0.3)
-        return [p.index, thumb] as [number, string]
-      })
-      const thumbResults = await Promise.all(thumbPromises)
-      setThumbnails(new Map(thumbResults))
+      // サムネイルはバックグラウンドで段階的に非同期生成
+      generateThumbnailsInBatches(bytes, info.pages, {}, genId).catch((err) =>
+        console.warn('サムネイル生成エラー:', err)
+      )
     } catch (err) {
       console.error('PDF読み込みエラー:', err)
       alert('PDFファイルの読み込みに失敗しました。正しいPDFファイルかご確認ください。')
-    } finally {
       setIsLoadingPdf(false)
     }
   }
@@ -502,9 +557,17 @@ export default function App() {
           : Promise.resolve(null),
       ])
 
-      setThumbnails((prev) => new Map(prev).set(pageIndex, thumbUrl))
+      setThumbnails((prev) => {
+        const old = prev.get(pageIndex)
+        if (old && old.startsWith('blob:')) URL.revokeObjectURL(old)
+        return new Map(prev).set(pageIndex, thumbUrl)
+      })
       if (mainUrl) {
-        setPageImages((prev) => new Map(prev).set(pageIndex, mainUrl))
+        setPageImages((prev) => {
+          const old = prev.get(pageIndex)
+          if (old && old.startsWith('blob:')) URL.revokeObjectURL(old)
+          return new Map(prev).set(pageIndex, mainUrl)
+        })
       }
       showToast(`🔄 ページ ${pageIndex + 1} を ${newRot}° に回転しました。`)
     } catch (err) {
@@ -515,6 +578,7 @@ export default function App() {
   // 他のPDFファイルを追加結合（マージ）
   const handleMergePdfs = async (files: FileList) => {
     if (!pdfBytes || files.length === 0) return
+    const genId = ++loadGenRef.current
     setIsProcessing(true)
     try {
       const additionalPdfs: Uint8Array[] = []
@@ -535,29 +599,28 @@ export default function App() {
       setDocInfo(newDocInfo)
       setBookmarks(newBms)
 
-      // サムネイル再生成
-      const thumbPromises = newDocInfo.pages.map(async (p) => {
-        const rot = pageRotations[p.index] || 0
-        const thumb = await renderPageImage(mergedBytes, p.index, 0.3, rot)
-        return [p.index, thumb] as [number, string]
-      })
-      const thumbResults = await Promise.all(thumbPromises)
-      setThumbnails(new Map(thumbResults))
-
-      // 現在ページのプレビュー画像も再生成
+      // 現在ページのプレビュー画像を再生成
       const mainUrl = await renderPageImage(
         mergedBytes,
         currentPage,
         1.5,
         pageRotations[currentPage] || 0
       )
-      setPageImages(new Map([[currentPage, mainUrl]]))
+      setPageImages((prev) => {
+        revokeUrlMap(prev)
+        return new Map([[currentPage, mainUrl]])
+      })
 
       showToast(`📄✨ ${files.length} 件のPDFファイルを結合しました！（全 ${newDocInfo.numPages} ページ）`)
+      setIsProcessing(false)
+
+      // サムネイル再生成（バックグラウンド段階実行）
+      generateThumbnailsInBatches(mergedBytes, newDocInfo.pages, pageRotations, genId).catch(
+        (err) => console.warn('結合後サムネイル生成エラー:', err)
+      )
     } catch (err) {
       console.error('PDF結合エラー:', err)
       alert('PDFファイルの結合中にエラーが発生しました。ファイル形式をご確認ください。')
-    } finally {
       setIsProcessing(false)
     }
   }
@@ -660,15 +723,6 @@ export default function App() {
       const newCurrentPage = Math.min(currentPage, newDocInfo.numPages - 1)
       setCurrentPage(newCurrentPage)
 
-      // サムネイル再生成
-      const thumbPromises = newDocInfo.pages.map(async (p) => {
-        const rot = newRotations[p.index] || 0
-        const thumb = await renderPageImage(newBytes, p.index, 0.3, rot)
-        return [p.index, thumb] as [number, string]
-      })
-      const thumbResults = await Promise.all(thumbPromises)
-      setThumbnails(new Map(thumbResults))
-
       // メイン画像再生成
       const mainUrl = await renderPageImage(
         newBytes,
@@ -676,13 +730,26 @@ export default function App() {
         1.5,
         newRotations[newCurrentPage] || 0
       )
-      setPageImages(new Map([[newCurrentPage, mainUrl]]))
+      setPageImages((prev) => {
+        revokeUrlMap(prev)
+        return new Map([[newCurrentPage, mainUrl]])
+      })
+      setThumbnails((prev) => {
+        revokeUrlMap(prev)
+        return new Map()
+      })
 
       showToast(`🗑️ ページ ${pageIndex + 1} を削除しました。（残り ${newDocInfo.numPages} ページ）`)
+      setIsProcessing(false)
+
+      // サムネイル再生成（バックグラウンド段階実行）
+      const genId = ++loadGenRef.current
+      generateThumbnailsInBatches(newBytes, newDocInfo.pages, newRotations, genId).catch(
+        (err) => console.warn('削除後サムネイル生成エラー:', err)
+      )
     } catch (err) {
       console.error('ページ削除エラー:', err)
       alert('ページの削除中にエラーが発生しました。')
-    } finally {
       setIsProcessing(false)
     }
   }
@@ -1062,7 +1129,9 @@ export default function App() {
 
   // 作業机カードクリック時のプレビュー連携
   const handleSelectDeskItemPreview = (item: DeskItem) => {
-    if (item.docId === 'current_doc') {
+    if (!pdfBytes || !fileName) return
+    const currentDocId = `doc_${fileName.replace(/[^a-zA-Z0-9_-]/g, '_')}_${pdfBytes.byteLength}`
+    if (item.docId === currentDocId || item.docId === 'current_doc') {
       setCurrentPage(item.pageIndex)
     }
   }
@@ -1070,6 +1139,7 @@ export default function App() {
   // リセット
   const handleReset = () => {
     if (window.confirm('現在の設定をリセットして別のPDFを開きますか？')) {
+      ++loadGenRef.current
       setPdfBytes(null)
       setFileName(null)
       setDocInfo(null)
@@ -1080,8 +1150,14 @@ export default function App() {
       setDrawings([])
       setHistory([])
       setLastAddedRect(null)
-      setPageImages(new Map())
-      setThumbnails(new Map())
+      setPageImages((prev) => {
+        revokeUrlMap(prev)
+        return new Map()
+      })
+      setThumbnails((prev) => {
+        revokeUrlMap(prev)
+        return new Map()
+      })
     }
   }
 
