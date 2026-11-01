@@ -232,249 +232,250 @@ export async function applyRedactions(
   const doc = m.Document.openDocument(pdfBytes, 'application/pdf');
   const numPages = doc.countPages();
 
-  // 1. 墨消し物理切除の実行
-  if (redactions.length > 0) {
-    const pageMap = new Map<number, RedactRect[]>();
-    for (const r of redactions) {
-      const list = pageMap.get(r.pageIndex) || [];
-      list.push(r);
-      pageMap.set(r.pageIndex, list);
-    }
+  const redactPageMap = new Map<number, RedactRect[]>();
+  for (const r of redactions) {
+    const list = redactPageMap.get(r.pageIndex) || [];
+    list.push(r);
+    redactPageMap.set(r.pageIndex, list);
+  }
 
-    for (let i = 0; i < numPages; i++) {
-      const rectList = pageMap.get(i);
-      if (!rectList || rectList.length === 0) continue;
+  const drawPageMap = new Map<number, DrawingItem[]>();
+  for (const d of drawings) {
+    const list = drawPageMap.get(d.pageIndex) || [];
+    list.push(d);
+    drawPageMap.set(d.pageIndex, list);
+  }
 
-      const page = doc.loadPage(i);
+  // 各ページの処理（物理墨消し切除 ＆ 墨消し矩形・描画オブジェクトのContents直接ベイク）
+  for (let i = 0; i < numPages; i++) {
+    const rectList = redactPageMap.get(i) || [];
+    const drawList = drawPageMap.get(i) || [];
 
+    if (rectList.length === 0 && drawList.length === 0) continue;
+
+    const page = doc.loadPage(i);
+    const pageObj = page.getObject();
+    const bounds = page.getBounds();
+
+    // 画面座標 (左上原点) から PDF 座標 (左下原点) への変換ヘルパー
+    const toPdfX = (x: number) => bounds[0] + x;
+    const toPdfY = (y: number) => bounds[3] - y;
+
+    // 1. 墨消し物理切除（テキスト・画像ストリームの不可逆物理削除）
+    if (rectList.length > 0) {
       for (const r of rectList) {
         const annot = page.createAnnotation('Redact');
         annot.setRect([r.x0, r.y0, r.x1, r.y1]);
-
-        const color = r.color || defaultColor;
-        if (color === 'white') {
-          annot.setColor([1, 1, 1]); // 白
-        } else {
-          annot.setColor([0, 0, 0]); // 黒
-        }
       }
-
-      // 物理墨消しをコミット (テキスト・画像ストリーム物理切除)
-      page.applyRedactions(true);
-    }
-  }
-
-  // 2. 描画・校正アイテムの合成適用（ページ本文Contentsストリームへの直接ベクターベイク）
-  if (drawings && drawings.length > 0) {
-    const drawPageMap = new Map<number, DrawingItem[]>();
-    for (const d of drawings) {
-      const list = drawPageMap.get(d.pageIndex) || [];
-      list.push(d);
-      drawPageMap.set(d.pageIndex, list);
+      // black_boxes = false で実行！エンジンによる黒ボックス強制描画を停止し、物理切除のみを行う
+      page.applyRedactions(false);
     }
 
-    for (let i = 0; i < numPages; i++) {
-      const drawList = drawPageMap.get(i);
-      if (!drawList || drawList.length === 0) continue;
+    let hasSemi = false;
+    let stream = '';
 
-      const page = doc.loadPage(i);
-      const pageObj = page.getObject();
-      const bounds = page.getBounds();
+    // 2. 墨消し矩形の下地焼き込み（白塗りは純白 1 1 1、黒塗りは漆黒 0 0 0）
+    for (const r of rectList) {
+      const isWhite = (r.color || defaultColor) === 'white';
+      const col = isWhite ? '1 1 1' : '0 0 0';
+      const rx = toPdfX(r.x0).toFixed(2);
+      const ry = toPdfY(r.y1).toFixed(2);
+      const rw = (r.x1 - r.x0).toFixed(2);
+      const rh = (r.y1 - r.y0).toFixed(2);
 
-      // 画面座標 (左上原点) から PDF 座標 (左下原点) への変換ヘルパー
-      const toPdfX = (x: number) => bounds[0] + x;
-      const toPdfY = (y: number) => bounds[3] - y;
+      stream += 'q\n';
+      stream += `${col} rg ${col} RG\n`;
+      stream += `${rx} ${ry} ${rw} ${rh} re f\n`;
+      stream += 'Q\n';
+    }
 
-      let hasSemi = false;
-      let stream = '';
+    // 3. 描画・校正アイテムの合成適用（白塗り等の下地の上に確実に描画）
+    for (const d of drawList) {
+      const rgb = hexToRgb(d.color);
+      const rStr = rgb[0].toFixed(3);
+      const gStr = rgb[1].toFixed(3);
+      const bStr = rgb[2].toFixed(3);
 
-      for (const d of drawList) {
-        const rgb = hexToRgb(d.color);
-        const rStr = rgb[0].toFixed(3);
-        const gStr = rgb[1].toFixed(3);
-        const bStr = rgb[2].toFixed(3);
+      if (d.tool === 'arrow' || d.tool === 'line') {
+        if (!d.points || d.points.length < 2) continue;
+        const x1 = d.points[0].x;
+        const y1 = d.points[0].y;
+        const x2 = d.points[1].x;
+        const y2 = d.points[1].y;
+        const lw = d.lineWidth || 2;
 
-        if (d.tool === 'arrow' || d.tool === 'line') {
-          if (!d.points || d.points.length < 2) continue;
-          const x1 = d.points[0].x;
-          const y1 = d.points[0].y;
-          const x2 = d.points[1].x;
-          const y2 = d.points[1].y;
-          const lw = d.lineWidth || 2;
+        stream += 'q\n';
+        stream += `${rStr} ${gStr} ${bStr} RG 1 J 1 j ${lw} w\n`;
+        stream += `${toPdfX(x1).toFixed(2)} ${toPdfY(y1).toFixed(2)} m ${toPdfX(x2).toFixed(2)} ${toPdfY(y2).toFixed(2)} l S\n`;
 
-          stream += 'q\n';
-          stream += `${rStr} ${gStr} ${bStr} RG 1 J 1 j ${lw} w\n`;
-          stream += `${toPdfX(x1).toFixed(2)} ${toPdfY(y1).toFixed(2)} m ${toPdfX(x2).toFixed(2)} ${toPdfY(y2).toFixed(2)} l S\n`;
+        // 矢じりベクターの確実な焼き込み
+        const mode = d.arrowHead || (d.tool === 'arrow' ? 'end' : 'none');
+        if (mode !== 'none') {
+          const dx = x2 - x1;
+          const dy = y2 - y1;
+          const len = Math.hypot(dx, dy);
+          if (len >= 5) {
+            const angle = Math.atan2(dy, dx);
+            // 美しいシャープなプロ製図開度（片側18度 / 全開36度）
+            const arrowAngle = Math.PI / 10;
+            const headLen = Math.min(len * 0.35, 12 + lw * 2);
 
-          // 矢じりベクターの確実な焼き込み
-          const mode = d.arrowHead || (d.tool === 'arrow' ? 'end' : 'none');
-          if (mode !== 'none') {
-            const dx = x2 - x1;
-            const dy = y2 - y1;
-            const len = Math.hypot(dx, dy);
-            if (len >= 5) {
-              const angle = Math.atan2(dy, dx);
-              // 美しいシャープなプロ製図開度（片側18度 / 全開36度）
-              const arrowAngle = Math.PI / 10;
-              const headLen = Math.min(len * 0.35, 12 + lw * 2);
+            if (mode === 'end' || mode === 'both') {
+              const ax1 = x2 - headLen * Math.cos(angle - arrowAngle);
+              const ay1 = y2 - headLen * Math.sin(angle - arrowAngle);
+              const ax2 = x2 - headLen * Math.cos(angle + arrowAngle);
+              const ay2 = y2 - headLen * Math.sin(angle + arrowAngle);
+              stream += `${toPdfX(ax1).toFixed(2)} ${toPdfY(ay1).toFixed(2)} m ${toPdfX(x2).toFixed(2)} ${toPdfY(y2).toFixed(2)} l ${toPdfX(ax2).toFixed(2)} ${toPdfY(ay2).toFixed(2)} l S\n`;
+            }
 
-              if (mode === 'end' || mode === 'both') {
-                const ax1 = x2 - headLen * Math.cos(angle - arrowAngle);
-                const ay1 = y2 - headLen * Math.sin(angle - arrowAngle);
-                const ax2 = x2 - headLen * Math.cos(angle + arrowAngle);
-                const ay2 = y2 - headLen * Math.sin(angle + arrowAngle);
-                stream += `${toPdfX(ax1).toFixed(2)} ${toPdfY(ay1).toFixed(2)} m ${toPdfX(x2).toFixed(2)} ${toPdfY(y2).toFixed(2)} l ${toPdfX(ax2).toFixed(2)} ${toPdfY(ay2).toFixed(2)} l S\n`;
-              }
-
-              if (mode === 'start' || mode === 'both') {
-                const bx1 = x1 + headLen * Math.cos(angle - arrowAngle);
-                const by1 = y1 + headLen * Math.sin(angle - arrowAngle);
-                const bx2 = x1 + headLen * Math.cos(angle + arrowAngle);
-                const by2 = y1 + headLen * Math.sin(angle + arrowAngle);
-                stream += `${toPdfX(bx1).toFixed(2)} ${toPdfY(by1).toFixed(2)} m ${toPdfX(x1).toFixed(2)} ${toPdfY(y1).toFixed(2)} l ${toPdfX(bx2).toFixed(2)} ${toPdfY(by2).toFixed(2)} l S\n`;
-              }
+            if (mode === 'start' || mode === 'both') {
+              const bx1 = x1 + headLen * Math.cos(angle - arrowAngle);
+              const by1 = y1 + headLen * Math.sin(angle - arrowAngle);
+              const bx2 = x1 + headLen * Math.cos(angle + arrowAngle);
+              const by2 = y1 + headLen * Math.sin(angle + arrowAngle);
+              stream += `${toPdfX(bx1).toFixed(2)} ${toPdfY(by1).toFixed(2)} m ${toPdfX(x1).toFixed(2)} ${toPdfY(y1).toFixed(2)} l ${toPdfX(bx2).toFixed(2)} ${toPdfY(by2).toFixed(2)} l S\n`;
             }
           }
-          stream += 'Q\n';
-        } else if (d.tool === 'check') {
-          if (d.x === undefined || d.y === undefined) continue;
-          const s = d.fontSize || 14;
-          const p1x = d.x + s * 0.15;
-          const p1y = d.y + s * 0.55;
-          const p2x = d.x + s * 0.42;
-          const p2y = d.y + s * 0.85;
-          const p3x = d.x + s * 0.9;
-          const p3y = d.y + s * 0.18;
-          const lw = d.lineWidth || Math.max(2, s * 0.12);
-
-          stream += 'q\n';
-          stream += `${rStr} ${gStr} ${bStr} RG 1 J 1 j ${lw} w\n`;
-          stream += `${toPdfX(p1x).toFixed(2)} ${toPdfY(p1y).toFixed(2)} m ${toPdfX(p2x).toFixed(2)} ${toPdfY(p2y).toFixed(2)} l ${toPdfX(p3x).toFixed(2)} ${toPdfY(p3y).toFixed(2)} l S\n`;
-          stream += 'Q\n';
-        } else if (d.tool === 'rect') {
-          if (d.x === undefined || d.y === undefined || d.w === undefined || d.h === undefined) continue;
-          const rx = toPdfX(d.x).toFixed(2);
-          const ry = toPdfY(d.y + d.h).toFixed(2);
-          const rw = d.w.toFixed(2);
-          const rh = d.h.toFixed(2);
-          const lw = (d.lineWidth || 2).toFixed(2);
-
-          stream += 'q\n';
-          if (d.fillMode === 'solid') {
-            stream += `${rStr} ${gStr} ${bStr} RG ${rStr} ${gStr} ${bStr} rg ${lw} w\n`;
-            stream += `${rx} ${ry} ${rw} ${rh} re B\n`;
-          } else if (d.fillMode === 'semi') {
-            hasSemi = true;
-            stream += `/GS_semi gs ${rStr} ${gStr} ${bStr} RG ${rStr} ${gStr} ${bStr} rg ${lw} w\n`;
-            stream += `${rx} ${ry} ${rw} ${rh} re B\n`;
-          } else {
-            stream += `${rStr} ${gStr} ${bStr} RG ${lw} w\n`;
-            stream += `${rx} ${ry} ${rw} ${rh} re S\n`;
-          }
-          stream += 'Q\n';
-        } else if (d.tool === 'circle') {
-          if (d.x === undefined || d.y === undefined || d.w === undefined || d.h === undefined) continue;
-          const cx = toPdfX(d.x + d.w / 2);
-          const cy = toPdfY(d.y + d.h / 2);
-          const rx = d.w / 2;
-          const ry = d.h / 2;
-          const kx = rx * 0.55228475;
-          const ky = ry * 0.55228475;
-          const lw = (d.lineWidth || 2).toFixed(2);
-
-          stream += 'q\n';
-          if (d.fillMode === 'solid') {
-            stream += `${rStr} ${gStr} ${bStr} RG ${rStr} ${gStr} ${bStr} rg ${lw} w\n`;
-          } else if (d.fillMode === 'semi') {
-            hasSemi = true;
-            stream += `/GS_semi gs ${rStr} ${gStr} ${bStr} RG ${rStr} ${gStr} ${bStr} rg ${lw} w\n`;
-          } else {
-            stream += `${rStr} ${gStr} ${bStr} RG ${lw} w\n`;
-          }
-          stream += `${(cx + rx).toFixed(2)} ${cy.toFixed(2)} m\n`;
-          stream += `${(cx + rx).toFixed(2)} ${(cy + ky).toFixed(2)} ${(cx + kx).toFixed(2)} ${(cy + ry).toFixed(2)} ${cx.toFixed(2)} ${(cy + ry).toFixed(2)} c\n`;
-          stream += `${(cx - kx).toFixed(2)} ${(cy + ry).toFixed(2)} ${(cx - rx).toFixed(2)} ${(cy + ky).toFixed(2)} ${(cx - rx).toFixed(2)} ${cy.toFixed(2)} c\n`;
-          stream += `${(cx - rx).toFixed(2)} ${(cy - ky).toFixed(2)} ${(cx - kx).toFixed(2)} ${(cy - ry).toFixed(2)} ${cx.toFixed(2)} ${(cy - ry).toFixed(2)} c\n`;
-          stream += `${(cx + kx).toFixed(2)} ${(cy - ry).toFixed(2)} ${(cx + rx).toFixed(2)} ${(cy - ky).toFixed(2)} ${(cx + rx).toFixed(2)} ${cy.toFixed(2)} c\n`;
-          stream += d.fillMode === 'solid' || d.fillMode === 'semi' ? 'B\n' : 'S\n';
-          stream += 'Q\n';
-        } else if (d.tool === 'polygon') {
-          if (!d.points || d.points.length < 3) continue;
-          const lw = (d.lineWidth || 2).toFixed(2);
-
-          stream += 'q\n';
-          if (d.fillMode === 'solid') {
-            stream += `${rStr} ${gStr} ${bStr} RG ${rStr} ${gStr} ${bStr} rg ${lw} w\n`;
-          } else if (d.fillMode === 'semi') {
-            hasSemi = true;
-            stream += `/GS_semi gs ${rStr} ${gStr} ${bStr} RG ${rStr} ${gStr} ${bStr} rg ${lw} w\n`;
-          } else {
-            stream += `${rStr} ${gStr} ${bStr} RG ${lw} w\n`;
-          }
-          stream += `${toPdfX(d.points[0].x).toFixed(2)} ${toPdfY(d.points[0].y).toFixed(2)} m\n`;
-          for (let p = 1; p < d.points.length; p++) {
-            stream += `${toPdfX(d.points[p].x).toFixed(2)} ${toPdfY(d.points[p].y).toFixed(2)} l\n`;
-          }
-          stream += `h ${d.fillMode === 'solid' || d.fillMode === 'semi' ? 'B' : 'S'}\n`;
-          stream += 'Q\n';
-        } else if (d.tool === 'text') {
-          if (d.x === undefined || d.y === undefined || !d.text) continue;
-          const fontPx = d.fontSize || 16;
-          const estW = d.text.length * fontPx * 1.2 + 20;
-          const estH = fontPx + 10;
-
-          // 背景を白で隠す矩形（ベクターで確実に白塗り）
-          if (d.bgWhite) {
-            stream += 'q\n';
-            stream += '1 1 1 rg 1 1 1 RG\n';
-            stream += `${toPdfX(d.x - 2).toFixed(2)} ${toPdfY(d.y + 4).toFixed(2)} ${estW.toFixed(2)} ${estH.toFixed(2)} re f\n`;
-            stream += 'Q\n';
-          }
-
-          // テキスト注釈（CJK対応フォント Heiti を指定し日本語でも指定色を100%保持）
-          const annot = page.createAnnotation('FreeText');
-          annot.setRect([d.x, d.y - fontPx, d.x + estW, d.y + 10]);
-          annot.setContents(d.text);
-          annot.setColor(rgb);
-          annot.setDefaultAppearance('Heiti', fontPx, rgb);
-          annot.update();
         }
+        stream += 'Q\n';
+      } else if (d.tool === 'check') {
+        if (d.x === undefined || d.y === undefined) continue;
+        const s = d.fontSize || 14;
+        const p1x = d.x + s * 0.15;
+        const p1y = d.y + s * 0.55;
+        const p2x = d.x + s * 0.42;
+        const p2y = d.y + s * 0.85;
+        const p3x = d.x + s * 0.9;
+        const p3y = d.y + s * 0.18;
+        const lw = d.lineWidth || Math.max(2, s * 0.12);
+
+        stream += 'q\n';
+        stream += `${rStr} ${gStr} ${bStr} RG 1 J 1 j ${lw} w\n`;
+        stream += `${toPdfX(p1x).toFixed(2)} ${toPdfY(p1y).toFixed(2)} m ${toPdfX(p2x).toFixed(2)} ${toPdfY(p2y).toFixed(2)} l ${toPdfX(p3x).toFixed(2)} ${toPdfY(p3y).toFixed(2)} l S\n`;
+        stream += 'Q\n';
+      } else if (d.tool === 'rect') {
+        if (d.x === undefined || d.y === undefined || d.w === undefined || d.h === undefined) continue;
+        const rx = toPdfX(d.x).toFixed(2);
+        const ry = toPdfY(d.y + d.h).toFixed(2);
+        const rw = d.w.toFixed(2);
+        const rh = d.h.toFixed(2);
+        const lw = (d.lineWidth || 2).toFixed(2);
+
+        stream += 'q\n';
+        if (d.fillMode === 'solid') {
+          stream += `${rStr} ${gStr} ${bStr} RG ${rStr} ${gStr} ${bStr} rg ${lw} w\n`;
+          stream += `${rx} ${ry} ${rw} ${rh} re B\n`;
+        } else if (d.fillMode === 'semi') {
+          hasSemi = true;
+          stream += `/GS_semi gs ${rStr} ${gStr} ${bStr} RG ${rStr} ${gStr} ${bStr} rg ${lw} w\n`;
+          stream += `${rx} ${ry} ${rw} ${rh} re B\n`;
+        } else {
+          stream += `${rStr} ${gStr} ${bStr} RG ${lw} w\n`;
+          stream += `${rx} ${ry} ${rw} ${rh} re S\n`;
+        }
+        stream += 'Q\n';
+      } else if (d.tool === 'circle') {
+        if (d.x === undefined || d.y === undefined || d.w === undefined || d.h === undefined) continue;
+        const cx = toPdfX(d.x + d.w / 2);
+        const cy = toPdfY(d.y + d.h / 2);
+        const rx = d.w / 2;
+        const ry = d.h / 2;
+        const kx = rx * 0.55228475;
+        const ky = ry * 0.55228475;
+        const lw = (d.lineWidth || 2).toFixed(2);
+
+        stream += 'q\n';
+        if (d.fillMode === 'solid') {
+          stream += `${rStr} ${gStr} ${bStr} RG ${rStr} ${gStr} ${bStr} rg ${lw} w\n`;
+        } else if (d.fillMode === 'semi') {
+          hasSemi = true;
+          stream += `/GS_semi gs ${rStr} ${gStr} ${bStr} RG ${rStr} ${gStr} ${bStr} rg ${lw} w\n`;
+        } else {
+          stream += `${rStr} ${gStr} ${bStr} RG ${lw} w\n`;
+        }
+        stream += `${(cx + rx).toFixed(2)} ${cy.toFixed(2)} m\n`;
+        stream += `${(cx + rx).toFixed(2)} ${(cy + ky).toFixed(2)} ${(cx + kx).toFixed(2)} ${(cy + ry).toFixed(2)} ${cx.toFixed(2)} ${(cy + ry).toFixed(2)} c\n`;
+        stream += `${(cx - kx).toFixed(2)} ${(cy + ry).toFixed(2)} ${(cx - rx).toFixed(2)} ${(cy + ky).toFixed(2)} ${(cx - rx).toFixed(2)} ${cy.toFixed(2)} c\n`;
+        stream += `${(cx - rx).toFixed(2)} ${(cy - ky).toFixed(2)} ${(cx - kx).toFixed(2)} ${(cy - ry).toFixed(2)} ${cx.toFixed(2)} ${(cy - ry).toFixed(2)} c\n`;
+        stream += `${(cx + kx).toFixed(2)} ${(cy - ry).toFixed(2)} ${(cx + rx).toFixed(2)} ${(cy - ky).toFixed(2)} ${(cx + rx).toFixed(2)} ${cy.toFixed(2)} c\n`;
+        stream += d.fillMode === 'solid' || d.fillMode === 'semi' ? 'B\n' : 'S\n';
+        stream += 'Q\n';
+      } else if (d.tool === 'polygon') {
+        if (!d.points || d.points.length < 3) continue;
+        const lw = (d.lineWidth || 2).toFixed(2);
+
+        stream += 'q\n';
+        if (d.fillMode === 'solid') {
+          stream += `${rStr} ${gStr} ${bStr} RG ${rStr} ${gStr} ${bStr} rg ${lw} w\n`;
+        } else if (d.fillMode === 'semi') {
+          hasSemi = true;
+          stream += `/GS_semi gs ${rStr} ${gStr} ${bStr} RG ${rStr} ${gStr} ${bStr} rg ${lw} w\n`;
+        } else {
+          stream += `${rStr} ${gStr} ${bStr} RG ${lw} w\n`;
+        }
+        stream += `${toPdfX(d.points[0].x).toFixed(2)} ${toPdfY(d.points[0].y).toFixed(2)} m\n`;
+        for (let p = 1; p < d.points.length; p++) {
+          stream += `${toPdfX(d.points[p].x).toFixed(2)} ${toPdfY(d.points[p].y).toFixed(2)} l\n`;
+        }
+        stream += `h ${d.fillMode === 'solid' || d.fillMode === 'semi' ? 'B' : 'S'}\n`;
+        stream += 'Q\n';
+      } else if (d.tool === 'text') {
+        if (d.x === undefined || d.y === undefined || !d.text) continue;
+        const fontPx = d.fontSize || 16;
+        const estW = d.text.length * fontPx * 1.2 + 20;
+        const estH = fontPx + 10;
+
+        // 背景を白で隠す矩形（ベクターで確実に白塗り）
+        if (d.bgWhite) {
+          stream += 'q\n';
+          stream += '1 1 1 rg 1 1 1 RG\n';
+          stream += `${toPdfX(d.x - 2).toFixed(2)} ${toPdfY(d.y + 4).toFixed(2)} ${estW.toFixed(2)} ${estH.toFixed(2)} re f\n`;
+          stream += 'Q\n';
+        }
+
+        // テキスト注釈（CJK対応フォント Heiti を指定し日本語でも指定色を100%保持）
+        const annot = page.createAnnotation('FreeText');
+        annot.setRect([d.x, d.y - fontPx, d.x + estW, d.y + 10]);
+        annot.setContents(d.text);
+        annot.setColor(rgb);
+        annot.setDefaultAppearance('Heiti', fontPx, rgb);
+        annot.update();
+      }
+    }
+
+    // 4. ベクターストリーム（墨消し下地矩形 ＋ 描画図形）をページの Contents に物理合成
+    if (stream.trim()) {
+      if (hasSemi) {
+        let res = pageObj.get('Resources');
+        if (!res || res.isNull()) {
+          res = doc.newDictionary();
+          pageObj.put('Resources', res);
+        }
+        let extGState = res.get('ExtGState');
+        if (!extGState || extGState.isNull()) {
+          extGState = doc.newDictionary();
+          res.put('ExtGState', extGState);
+        }
+        const gsSemi = doc.newDictionary();
+        gsSemi.put('Type', doc.newName('ExtGState'));
+        gsSemi.put('ca', doc.newReal(0.25));
+        gsSemi.put('CA', doc.newReal(0.25));
+        extGState.put('GS_semi', gsSemi);
       }
 
-      // ベクターストリームをページの Contents に物理合成
-      if (stream.trim()) {
-        if (hasSemi) {
-          let res = pageObj.get('Resources');
-          if (!res || res.isNull()) {
-            res = doc.newDictionary();
-            pageObj.put('Resources', res);
-          }
-          let extGState = res.get('ExtGState');
-          if (!extGState || extGState.isNull()) {
-            extGState = doc.newDictionary();
-            res.put('ExtGState', extGState);
-          }
-          const gsSemi = doc.newDictionary();
-          gsSemi.put('Type', doc.newName('ExtGState'));
-          gsSemi.put('ca', doc.newReal(0.25));
-          gsSemi.put('CA', doc.newReal(0.25));
-          extGState.put('GS_semi', gsSemi);
-        }
+      const streamDict = doc.newDictionary();
+      const streamObj = doc.addStream(new TextEncoder().encode(stream), streamDict);
 
-        const streamDict = doc.newDictionary();
-        const streamObj = doc.addStream(new TextEncoder().encode(stream), streamDict);
-
-        const contents = pageObj.get('Contents');
-        if (!contents || contents.isNull()) {
-          pageObj.put('Contents', streamObj);
-        } else if (contents.isArray()) {
-          contents.push(streamObj);
-        } else {
-          const arr = doc.newArray();
-          arr.push(contents);
-          arr.push(streamObj);
-          pageObj.put('Contents', arr);
-        }
+      const contents = pageObj.get('Contents');
+      if (!contents || contents.isNull()) {
+        pageObj.put('Contents', streamObj);
+      } else if (contents.isArray()) {
+        contents.push(streamObj);
+      } else {
+        const arr = doc.newArray();
+        arr.push(contents);
+        arr.push(streamObj);
+        pageObj.put('Contents', arr);
       }
     }
   }
