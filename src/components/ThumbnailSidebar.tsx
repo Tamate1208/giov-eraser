@@ -83,6 +83,16 @@ export const ThumbnailSidebar: React.FC<ThumbnailSidebarProps> = ({
   const [editingBookmarkId, setEditingBookmarkId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
 
+  // 現在ページのサムネイルへ自動スクロール追従するための ref マップ
+  const pageCardRefs = useRef<Map<number, HTMLDivElement>>(new Map())
+
+  useEffect(() => {
+    const el = pageCardRefs.current.get(currentPage)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [currentPage])
+
   // 各ページの墨消し件数を集計
   const countsByPage = new Map<number, number>()
   for (const r of redactions) {
@@ -302,6 +312,10 @@ export const ThumbnailSidebar: React.FC<ThumbnailSidebarProps> = ({
               return (
                 <div
                   key={p.index}
+                  ref={(el) => {
+                    if (el) pageCardRefs.current.set(p.index, el)
+                    else pageCardRefs.current.delete(p.index)
+                  }}
                   className={`flex flex-col gap-1.5 p-2 rounded-xl transition text-left group relative border ${
                     isSelected
                       ? 'bg-blue-950/40 border-blue-500 shadow-lg ring-1 ring-blue-500/50'

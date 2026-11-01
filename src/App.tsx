@@ -1287,6 +1287,8 @@ export default function App() {
             <PdfViewer
               pageImage={pageImages.get(currentPage) || null}
               pageInfo={docInfo.pages[currentPage] || null}
+              currentPage={currentPage}
+              numPages={docInfo.numPages}
               redactions={currentPageRedactions}
               colorMode={colorMode}
               zoom={zoom}
@@ -1303,6 +1305,7 @@ export default function App() {
               rulerMeasureMode={rulerMeasureMode}
               resetViewTrigger={resetViewTrigger}
               fitViewTrigger={fitViewTrigger}
+              onPageChange={setCurrentPage}
               onZoomChange={setZoom}
               onAddRedaction={handleAddRedaction}
               onRemoveRedaction={handleRemoveRedaction}

@@ -207,6 +207,8 @@ function getArrowHeadPath(
 interface PdfViewerProps {
   pageImage: string | null;
   pageInfo: PdfPageInfo | null;
+  currentPage?: number;
+  numPages?: number;
   redactions: RedactRect[];
   colorMode: 'black' | 'white';
   zoom: number;
@@ -224,6 +226,7 @@ interface PdfViewerProps {
   rulerScale?: number;
   rulerMeasureMode?: RulerMeasureMode;
   // ハンドラ
+  onPageChange?: (newPage: number) => void;
   onZoomChange?: (newZoom: number) => void;
   resetViewTrigger?: number;
   fitViewTrigger?: number;
@@ -237,6 +240,8 @@ interface PdfViewerProps {
 export const PdfViewer: React.FC<PdfViewerProps> = ({
   pageImage,
   pageInfo,
+  currentPage = 0,
+  numPages = 1,
   redactions,
   colorMode,
   zoom,
@@ -251,6 +256,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   drawings,
   rulerScale = 100,
   rulerMeasureMode = 'distance',
+  onPageChange,
   onZoomChange,
   resetViewTrigger,
   fitViewTrigger,
@@ -278,6 +284,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
   const panOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const panOffsetStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  const lastWheelPageChangeRef = useRef<number>(0)
 
   useEffect(() => {
     panOffsetRef.current = panOffset
@@ -1074,16 +1081,17 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
 
   // マウスホイールによる操作:
   // - Ctrl / Cmd / Alt + ホイール: カーソル位置を中心に拡大・縮小（ズーム）
-  // - 通常のホイール回転（または2本指スクロール）: 用紙を上下・左右にスムーズにスクロール
+  // - 通常のホイール回転（キーなし）: 前後のページへ切り替え（左ペイン・ページ番号と完全連動）
   useEffect(() => {
     const container = containerRef.current
-    if (!container || !onZoomChange) return
+    if (!container) return
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault()
 
       const shouldZoom = e.ctrlKey || e.metaKey || e.altKey
       if (shouldZoom) {
+        if (!onZoomChange) return
         const rect = container.getBoundingClientRect()
         const cx = rect.width / 2
         const cy = rect.height / 2
@@ -1102,21 +1110,25 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
           setPanOffset({ x: newPanX, y: newPanY })
           onZoomChange(newZoom)
         }
-      } else {
-        // 通常のホイールスクロール（Shift + ホイールは横スクロールとして扱う）
-        const dx = e.shiftKey && e.deltaX === 0 ? e.deltaY : e.deltaX
-        const dy = e.shiftKey && e.deltaX === 0 ? 0 : e.deltaY
-        const currentPan = panOffsetRef.current
-        setPanOffset({
-          x: currentPan.x - dx,
-          y: currentPan.y - dy,
-        })
+      } else if (onPageChange && numPages > 1) {
+        // 微小なトラックパッド揺れは無視
+        if (Math.abs(e.deltaY) < 8) return
+        const now = Date.now()
+        if (now - lastWheelPageChangeRef.current < 180) return
+
+        if (e.deltaY > 0 && currentPage < numPages - 1) {
+          lastWheelPageChangeRef.current = now
+          onPageChange(currentPage + 1)
+        } else if (e.deltaY < 0 && currentPage > 0) {
+          lastWheelPageChangeRef.current = now
+          onPageChange(currentPage - 1)
+        }
       }
     }
 
     container.addEventListener('wheel', handleWheel, { passive: false })
     return () => container.removeEventListener('wheel', handleWheel)
-  }, [zoom, activeTool, onZoomChange])
+  }, [zoom, currentPage, numPages, onPageChange, onZoomChange])
 
   // 物差しの面積計測の確定
   const handleFinishRulerArea = () => {
@@ -3371,6 +3383,15 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       ) : (
         <div className="text-center text-slate-500">
           <p>ページを読み込み中...</p>
+        </div>
+      )}
+
+      {/* 右下フローティング・ページ番号インジケータ */}
+      {pageInfo && numPages > 0 && (
+        <div className="absolute bottom-4 right-5 z-30 pointer-events-none flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/85 border border-slate-700/80 text-slate-200 text-xs font-mono font-bold shadow-xl backdrop-blur-sm">
+          <span>
+            P. {currentPage + 1} / {numPages}
+          </span>
         </div>
       )}
     </div>
