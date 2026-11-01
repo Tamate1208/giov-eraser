@@ -345,8 +345,10 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     text: string
     bgWhite: boolean
     rotation: number
+    fontSize: number
     editingId?: string
   } | null>(null)
+  const textInputPopupRef = useRef<HTMLDivElement | null>(null)
 
   // テキスト回転ドラッグ用の state
   const [rotatingDrawingId, setRotatingDrawingId] = useState<string | null>(null)
@@ -586,6 +588,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       text: item.text ?? '',
       bgWhite: item.bgWhite ?? true,
       rotation: item.rotation ?? 0,
+      fontSize: item.fontSize || fontSize || 16,
       editingId: item.id,
     })
     setSelectedDrawingId(item.id)
@@ -976,6 +979,28 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     rulerScale,
   ])
 
+  // テキスト入力ポップアップ上でのマウスホイールによるフォントサイズ変更（上回転で+1px、下回転で-1px）
+  useEffect(() => {
+    const el = textInputPopupRef.current
+    if (!el || !textInput) return
+
+    const handlePopupWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const delta = e.deltaY < 0 ? 1 : -1
+      setTextInput((prev) => {
+        if (!prev) return null
+        const nextSize = Math.min(96, Math.max(8, prev.fontSize + delta))
+        return { ...prev, fontSize: nextSize }
+      })
+    }
+
+    el.addEventListener('wheel', handlePopupWheel, { passive: false })
+    return () => {
+      el.removeEventListener('wheel', handlePopupWheel)
+    }
+  }, [textInput !== null])
+
   // マウスホイールによるズーム操作（Ctrl/Cmd/Alt + ホイール、または手のひらツール選択中のホイール回転）
   useEffect(() => {
     const container = containerRef.current
@@ -1142,13 +1167,14 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     }
 
     if (textInput.editingId) {
-      // 既存テキストの更新
+      // 既存テキストの更新（文字内容、背景白、回転角度、フォントサイズ）
       onUpdateDrawing?.(
         textInput.editingId,
         {
           text: textInput.text.trim(),
           bgWhite: textInput.bgWhite,
           rotation: textInput.rotation || 0,
+          fontSize: textInput.fontSize,
         },
         true
       )
@@ -1160,7 +1186,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         color: drawColor,
         fillMode: 'none',
         lineWidth: 1,
-        fontSize,
+        fontSize: textInput.fontSize,
         text: textInput.text.trim(),
         bgWhite: textInput.bgWhite,
         rotation: textInput.rotation || 0,
@@ -1270,6 +1296,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         text: '',
         bgWhite: true, // デフォルトで白背景（墨消し跡の打ち直しに便利）
         rotation: 0,
+        fontSize: fontSize || 16,
       })
       return
     }
@@ -2203,13 +2230,19 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
 
               if (item.tool === 'text') {
                 if (item.x === undefined || item.y === undefined || !item.text) return null
+                const isCurrentlyEditing = textInput?.editingId === item.id
+                const effectiveFontSize = isCurrentlyEditing ? (textInput.fontSize || item.fontSize) : item.fontSize
+                const effectiveText = isCurrentlyEditing ? (textInput.text || item.text) : item.text
+                const effectiveBgWhite = isCurrentlyEditing ? textInput.bgWhite : item.bgWhite
+                const effectiveRot = isCurrentlyEditing ? (textInput.rotation ?? item.rotation ?? 0) : (item.rotation || 0)
+
                 const tx = item.x * 1.5
                 const ty = item.y * 1.5
-                const fontPx = item.fontSize * 1.5
-                const estW = estimateTextWidth(item.text, fontPx)
+                const fontPx = effectiveFontSize * 1.5
+                const estW = estimateTextWidth(effectiveText, fontPx)
                 const cx = tx + estW / 2
                 const cy = ty - fontPx / 2
-                const rot = item.rotation || 0
+                const rot = effectiveRot
 
                 return (
                   <g
@@ -2233,7 +2266,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                         ? 'クリックして削除'
                         : 'ダブルクリックで文字内容を編集'}
                     </title>
-                    {item.bgWhite && (
+                    {effectiveBgWhite && (
                       <rect
                         x={tx - 3}
                         y={ty - fontPx + 2}
@@ -2278,7 +2311,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       fontFamily="system-ui, -apple-system, sans-serif"
                       fontWeight="bold"
                     >
-                      {item.text}
+                      {effectiveText}
                     </text>
 
                     {/* 選択中かつ選択ツールの移動可能バッジ */}
@@ -2864,6 +2897,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
           {/* テキスト入力ポップアップ (白基調・高コントラストUI) */}
           {textInput && (
             <div
+              ref={textInputPopupRef}
               style={{
                 left: `${textInput.x}px`,
                 top: `${textInput.y}px`,
@@ -2876,7 +2910,36 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                   <Type className="w-3.5 h-3.5 text-blue-600" />
                   <span>{textInput.editingId ? 'テキストの編集' : '文字・校正テキストの入力'}</span>
                 </span>
-                <span className="text-slate-400 text-[11px] font-mono">({fontSize}pt)</span>
+                <div className="flex items-center gap-1 bg-slate-100 hover:bg-slate-200/80 px-1.5 py-0.5 rounded-md border border-slate-200 transition text-[11px] font-mono text-slate-700">
+                  <button
+                    type="button"
+                    title="文字サイズを縮小 (-1px)"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setTextInput((prev) => (prev ? { ...prev, fontSize: Math.max(8, prev.fontSize - 1) } : null))
+                    }}
+                    className="w-4 h-4 flex items-center justify-center hover:bg-white rounded font-bold text-slate-600 hover:text-blue-600 cursor-pointer transition active:scale-95"
+                  >
+                    -
+                  </button>
+                  <span
+                    className="font-bold text-blue-600 min-w-[32px] text-center select-none"
+                    title="マウスホイールの上下回転でサイズを拡大・縮小できます"
+                  >
+                    {textInput.fontSize}px
+                  </span>
+                  <button
+                    type="button"
+                    title="文字サイズを拡大 (+1px)"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setTextInput((prev) => (prev ? { ...prev, fontSize: Math.min(96, prev.fontSize + 1) } : null))
+                    }}
+                    className="w-4 h-4 flex items-center justify-center hover:bg-white rounded font-bold text-slate-600 hover:text-blue-600 cursor-pointer transition active:scale-95"
+                  >
+                    +
+                  </button>
+                </div>
               </div>
               <input
                 autoFocus
@@ -2908,6 +2971,9 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                   <span className="text-[11px] font-medium">背景を白で隠す</span>
                 </label>
                 <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-slate-400 font-sans hidden sm:inline" title="ダイアログ上でホイールを回すとフォントサイズが伸縮します">
+                    ↕ ホイールで伸縮
+                  </span>
                   <button
                     type="button"
                     onClick={() =>
