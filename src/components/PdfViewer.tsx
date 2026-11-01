@@ -1843,14 +1843,16 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     {(isHovered || isSelected) && (
                       <g
                         transform={`translate(${midX + (isSelected && activeTool === 'select' ? 18 : 0)}, ${midY})`}
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation()
                           onRemoveDrawing(item.id)
                           setSelectedDrawingId(null)
                         }}
-                        className="cursor-pointer hover:scale-125 transition transform"
+                        className="cursor-pointer group/btn"
                       >
-                        <circle cx="0" cy="0" r="10" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
+                        <circle cx="0" cy="0" r="15" fill="transparent" />
+                        <circle cx="0" cy="0" r="10" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" className="group-hover/btn:fill-rose-600 group-hover/btn:stroke-[2.5px] transition-all" />
                         <line x1="-4" y1="-4" x2="4" y2="4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
                         <line x1="4" y1="-4" x2="-4" y2="4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
                       </g>
@@ -1955,14 +1957,16 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     {(isHovered || isSelected) && (
                       <g
                         transform={`translate(${rx + rw}, ${ry})`}
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation()
                           onRemoveDrawing(item.id)
                           setSelectedDrawingId(null)
                         }}
-                        className="cursor-pointer hover:scale-125 transition transform"
+                        className="cursor-pointer group/btn"
                       >
-                        <circle cx="0" cy="0" r="10" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
+                        <circle cx="0" cy="0" r="15" fill="transparent" />
+                        <circle cx="0" cy="0" r="10" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" className="group-hover/btn:fill-rose-600 group-hover/btn:stroke-[2.5px] transition-all" />
                         <line x1="-4" y1="-4" x2="4" y2="4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
                         <line x1="4" y1="-4" x2="-4" y2="4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
                       </g>
@@ -2064,14 +2068,16 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     {(isHovered || isSelected) && (
                       <g
                         transform={`translate(${cx + rx}, ${cy})`}
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation()
                           onRemoveDrawing(item.id)
                           setSelectedDrawingId(null)
                         }}
-                        className="cursor-pointer hover:scale-125 transition transform"
+                        className="cursor-pointer group/btn"
                       >
-                        <circle cx="0" cy="0" r="10" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
+                        <circle cx="0" cy="0" r="15" fill="transparent" />
+                        <circle cx="0" cy="0" r="10" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" className="group-hover/btn:fill-rose-600 group-hover/btn:stroke-[2.5px] transition-all" />
                         <line x1="-4" y1="-4" x2="4" y2="4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
                         <line x1="4" y1="-4" x2="-4" y2="4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
                       </g>
@@ -2181,14 +2187,16 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     {(isHovered || isSelected) && (
                       <g
                         transform={`translate(${item.points[0].x * 1.5}, ${item.points[0].y * 1.5})`}
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation()
                           onRemoveDrawing(item.id)
                           setSelectedDrawingId(null)
                         }}
-                        className="cursor-pointer hover:scale-125 transition transform"
+                        className="cursor-pointer group/btn"
                       >
-                        <circle cx="0" cy="0" r="10" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
+                        <circle cx="0" cy="0" r="15" fill="transparent" />
+                        <circle cx="0" cy="0" r="10" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" className="group-hover/btn:fill-rose-600 group-hover/btn:stroke-[2.5px] transition-all" />
                         <line x1="-4" y1="-4" x2="4" y2="4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
                         <line x1="4" y1="-4" x2="-4" y2="4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
                       </g>
@@ -2264,14 +2272,16 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     {(isHovered || isSelected) && (
                       <g
                         transform={`translate(${ox + s}, ${oy})`}
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation()
                           onRemoveDrawing(item.id)
                           setSelectedDrawingId(null)
                         }}
-                        className="cursor-pointer hover:scale-125 transition transform"
+                        className="cursor-pointer group/btn"
                       >
-                        <circle cx="0" cy="0" r="9" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
+                        <circle cx="0" cy="0" r="14" fill="transparent" />
+                        <circle cx="0" cy="0" r="9" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" className="group-hover/btn:fill-rose-600 group-hover/btn:stroke-[2.5px] transition-all" />
                         <line x1="-3.5" y1="-3.5" x2="3.5" y2="3.5" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
                         <line x1="3.5" y1="-3.5" x2="-3.5" y2="3.5" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
                       </g>
@@ -2383,7 +2393,8 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                       >
                         <title>ドラッグして回転（Shiftキーで15度スナップ）</title>
                         <line x1="0" y1="0" x2="0" y2="-20" stroke="#10b981" strokeWidth="1.5" strokeDasharray="2 2" />
-                        <circle cx="0" cy="-20" r="7" fill="#10b981" stroke="#ffffff" strokeWidth="1.5" className="hover:scale-125 transition transform shadow-md" />
+                        <circle cx="0" cy="-20" r="13" fill="transparent" />
+                        <circle cx="0" cy="-20" r="7" fill="#10b981" stroke="#ffffff" strokeWidth="1.5" className="group-hover/rot:fill-emerald-600 group-hover/rot:stroke-[2.5px] transition-all shadow-md" />
                         <path d="M -3 -20 A 3 3 0 1 1 3 -20" fill="none" stroke="#ffffff" strokeWidth="1.2" />
                         <path d="M 2 -22 L 4 -20 L 2 -18" fill="none" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
                       </g>
@@ -2393,15 +2404,17 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     {isSelected && !isEraserMode && (
                       <g
                         transform={`translate(${tx + estW + 10}, ${ty - fontPx / 2})`}
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation()
                           const nextRot = ((item.rotation || 0) + 90) % 360
                           onUpdateDrawing?.(item.id, { rotation: nextRot }, true)
                         }}
-                        className="cursor-pointer hover:scale-125 transition transform"
+                        className="cursor-pointer group/btn"
                       >
                         <title>90度回転</title>
-                        <circle cx="0" cy="0" r="9" fill="#10b981" stroke="#ffffff" strokeWidth="1.5" />
+                        <circle cx="0" cy="0" r="14" fill="transparent" />
+                        <circle cx="0" cy="0" r="9" fill="#10b981" stroke="#ffffff" strokeWidth="1.5" className="group-hover/btn:fill-emerald-600 group-hover/btn:stroke-[2.5px] transition-all" />
                         <path d="M -3.5 0 A 3.5 3.5 0 1 1 3.5 0" fill="none" stroke="#ffffff" strokeWidth="1.2" />
                         <path d="M 2 -2.5 L 4.5 0 L 2 2.5" fill="none" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
                       </g>
@@ -2411,11 +2424,13 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     {isSelected && !isEraserMode && (
                       <g
                         transform={`translate(${tx + estW + 30}, ${ty - fontPx / 2})`}
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => handleStartEditText(item, e)}
-                        className="cursor-pointer hover:scale-125 transition transform"
+                        className="cursor-pointer group/btn"
                       >
                         <title>テキスト内容を編集（ダブルクリックでも編集可能）</title>
-                        <circle cx="0" cy="0" r="9" fill="#0284c7" stroke="#ffffff" strokeWidth="1.5" />
+                        <circle cx="0" cy="0" r="14" fill="transparent" />
+                        <circle cx="0" cy="0" r="9" fill="#0284c7" stroke="#ffffff" strokeWidth="1.5" className="group-hover/btn:fill-sky-500 group-hover/btn:stroke-[2.5px] transition-all" />
                         {/* 鉛筆アイコン */}
                         <path
                           d="M -3 3 L 1.5 -1.5 L 3 -0 L -1.5 4.5 Z M -4.5 4.5 L -3 4 L -4 3 Z"
@@ -2428,14 +2443,16 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     {(isHovered || isSelected) && (
                       <g
                         transform={`translate(${tx - 12}, ${ty - fontPx / 2})`}
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation()
                           onRemoveDrawing(item.id)
                           setSelectedDrawingId(null)
                         }}
-                        className="cursor-pointer hover:scale-125 transition transform"
+                        className="cursor-pointer group/btn"
                       >
-                        <circle cx="0" cy="0" r="9" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
+                        <circle cx="0" cy="0" r="14" fill="transparent" />
+                        <circle cx="0" cy="0" r="9" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" className="group-hover/btn:fill-rose-600 group-hover/btn:stroke-[2.5px] transition-all" />
                         <line x1="-3.5" y1="-3.5" x2="3.5" y2="3.5" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
                         <line x1="3.5" y1="-3.5" x2="-3.5" y2="3.5" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
                       </g>
@@ -2528,7 +2545,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     {isSelected && !isEraserMode && (
                       <g
                         transform={`translate(${cx}, ${ty})`}
-                        className="cursor-grab active:cursor-grabbing"
+                        className="cursor-grab active:cursor-grabbing group/rot"
                         onPointerDown={(e) => handleRotateStart(item, e)}
                       >
                         <title>ドラッグして回転（Shiftキーで15度スナップ）</title>
@@ -2541,6 +2558,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                           strokeWidth="1.5"
                           strokeDasharray="2 2"
                         />
+                        <circle cx="0" cy="-20" r="13" fill="transparent" />
                         <circle
                           cx="0"
                           cy="-20"
@@ -2548,7 +2566,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                           fill="#10b981"
                           stroke="#ffffff"
                           strokeWidth="1.5"
-                          className="hover:scale-125 transition transform shadow-md"
+                          className="group-hover/rot:fill-emerald-600 group-hover/rot:stroke-[2.5px] transition-all shadow-md"
                         />
                         <path
                           d="M -3 -20 A 3 3 0 1 1 3 -20"
@@ -2571,15 +2589,17 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     {isSelected && !isEraserMode && (
                       <g
                         transform={`translate(${tx + tw + 12}, ${ty + 10})`}
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation()
                           const nextRot = ((item.rotation || 0) + 90) % 360
                           onUpdateDrawing?.(item.id, { rotation: nextRot }, true)
                         }}
-                        className="cursor-pointer hover:scale-125 transition transform"
+                        className="cursor-pointer group/btn"
                       >
                         <title>90度回転</title>
-                        <circle cx="0" cy="0" r="9" fill="#10b981" stroke="#ffffff" strokeWidth="1.5" />
+                        <circle cx="0" cy="0" r="14" fill="transparent" />
+                        <circle cx="0" cy="0" r="9" fill="#10b981" stroke="#ffffff" strokeWidth="1.5" className="group-hover/btn:fill-emerald-600 group-hover/btn:stroke-[2.5px] transition-all" />
                         <path d="M -3.5 0 A 3.5 3.5 0 1 1 3.5 0" fill="none" stroke="#ffffff" strokeWidth="1.2" />
                         <path
                           d="M 2 -2.5 L 4.5 0 L 2 2.5"
@@ -2596,15 +2616,17 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
                     {(isHovered || isSelected) && !isEraserMode && (
                       <g
                         transform={`translate(${tx + tw + 12}, ${ty + 34})`}
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation()
                           onRemoveDrawing(item.id)
                           setSelectedDrawingId(null)
                         }}
-                        className="cursor-pointer hover:scale-125 transition transform"
+                        className="cursor-pointer group/btn"
                       >
                         <title>画像を削除</title>
-                        <circle cx="0" cy="0" r="9" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
+                        <circle cx="0" cy="0" r="14" fill="transparent" />
+                        <circle cx="0" cy="0" r="9" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" className="group-hover/btn:fill-rose-600 group-hover/btn:stroke-[2.5px] transition-all" />
                         <line
                           x1="-3.5"
                           y1="-3.5"
@@ -2628,16 +2650,22 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
 
                     {/* 四隅のリサイズハンドル (右下) */}
                     {isSelected && !isEraserMode && (
-                      <circle
-                        cx={tx + tw}
-                        cy={ty + th}
-                        r="6"
-                        fill="#0284c7"
-                        stroke="#ffffff"
-                        strokeWidth="2"
-                        className="cursor-se-resize hover:scale-125 transition shadow-md"
+                      <g
+                        transform={`translate(${tx + tw}, ${ty + th})`}
+                        className="cursor-se-resize group/rsz"
                         onPointerDown={(e) => handleImageResizeStart(item, e)}
-                      />
+                      >
+                        <circle cx="0" cy="0" r="12" fill="transparent" />
+                        <circle
+                          cx="0"
+                          cy="0"
+                          r="6"
+                          fill="#0284c7"
+                          stroke="#ffffff"
+                          strokeWidth="2"
+                          className="group-hover/rsz:fill-sky-500 group-hover/rsz:stroke-[2.5px] transition-all shadow-md"
+                        />
+                      </g>
                     )}
                   </g>
                 )
